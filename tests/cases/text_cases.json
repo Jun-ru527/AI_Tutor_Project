@@ -1,0 +1,1461 @@
+{
+  "meta": {
+    "version": "2.1",
+    "now": "2026-11-14T19:30:00+08:00",
+    "timezone": "Asia/Shanghai",
+    "description": "prompts.py 契约用例：text_cases 对应 TEST_SENTENCES 的 20 条测试句；edge_cases 覆盖模糊、编造、拒答、收入等异常；multi_cases 覆盖一句话多笔（clean_many）。ideal 是理想模型输出，用于离线验证规则。"
+  },
+  "text_cases": [
+    {
+      "id": "t01",
+      "text": "午饭25",
+      "expected": {
+        "ok": true,
+        "amount": 25,
+        "category": "餐饮",
+        "spent_at": "2026-11-14"
+      },
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": 25.0,
+        "category": "餐饮",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": "",
+        "confidence": 0.95
+      }
+    },
+    {
+      "id": "t02",
+      "text": "昨天晚上吃火锅花了128元",
+      "expected": {
+        "ok": true,
+        "amount": 128,
+        "category": "餐饮",
+        "spent_at": "2026-11-13"
+      },
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": 128.0,
+        "category": "餐饮",
+        "spent_at": "2026-11-13",
+        "merchant": "",
+        "note": "晚上吃火锅",
+        "confidence": 0.95
+      }
+    },
+    {
+      "id": "t03",
+      "text": "今天打车32块",
+      "expected": {
+        "ok": true,
+        "amount": 32,
+        "category": "交通",
+        "spent_at": "2026-11-14"
+      },
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": 32.0,
+        "category": "交通",
+        "spent_at": "2026-11-14",
+        "merchant": "滴滴",
+        "note": "",
+        "confidence": 0.9
+      }
+    },
+    {
+      "id": "t04",
+      "text": "买衣服399",
+      "expected": {
+        "ok": true,
+        "amount": 399,
+        "category": "购物",
+        "spent_at": "2026-11-14"
+      },
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": 399.0,
+        "category": "购物",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": "",
+        "confidence": 0.9
+      }
+    },
+    {
+      "id": "t05",
+      "text": "房租3000",
+      "expected": {
+        "ok": true,
+        "amount": 3000,
+        "category": "居住",
+        "spent_at": "2026-11-14"
+      },
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": 3000.0,
+        "category": "居住",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": "",
+        "confidence": 0.95
+      }
+    },
+    {
+      "id": "t06",
+      "text": "看电影45",
+      "expected": {
+        "ok": true,
+        "amount": 45,
+        "category": "娱乐",
+        "spent_at": "2026-11-14"
+      },
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": 45.0,
+        "category": "娱乐",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": "",
+        "confidence": 0.9
+      }
+    },
+    {
+      "id": "t07",
+      "text": "医院挂号50",
+      "expected": {
+        "ok": true,
+        "amount": 50,
+        "category": "医疗",
+        "spent_at": "2026-11-14"
+      },
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": 50.0,
+        "category": "医疗",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": "",
+        "confidence": 0.9
+      }
+    },
+    {
+      "id": "t08",
+      "text": "超市买菜86.5",
+      "expected": {
+        "ok": true,
+        "amount": 86.5,
+        "category": "购物",
+        "spent_at": "2026-11-14"
+      },
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": 86.5,
+        "category": "购物",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": "",
+        "confidence": 0.85
+      }
+    },
+    {
+      "id": "t09",
+      "text": "奶茶18",
+      "expected": {
+        "ok": true,
+        "amount": 18,
+        "category": "餐饮",
+        "spent_at": "2026-11-14"
+      },
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": 18.0,
+        "category": "餐饮",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": "",
+        "confidence": 0.9
+      }
+    },
+    {
+      "id": "t10",
+      "text": "地铁5元",
+      "expected": {
+        "ok": true,
+        "amount": 5,
+        "category": "交通",
+        "spent_at": "2026-11-14"
+      },
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": 5.0,
+        "category": "交通",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": "",
+        "confidence": 0.9
+      }
+    },
+    {
+      "id": "t11",
+      "text": "交话费100",
+      "expected": {
+        "ok": true,
+        "amount": 100,
+        "category": "其他",
+        "spent_at": "2026-11-14"
+      },
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": 100.0,
+        "category": "其他",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": "交话费",
+        "confidence": 0.9
+      }
+    },
+    {
+      "id": "t12",
+      "text": "健身年卡1200",
+      "expected": {
+        "ok": true,
+        "amount": 1200,
+        "category": "娱乐",
+        "spent_at": "2026-11-14"
+      },
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": 1200.0,
+        "category": "娱乐",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": "",
+        "confidence": 0.85
+      }
+    },
+    {
+      "id": "t13",
+      "text": "药店买药36",
+      "expected": {
+        "ok": true,
+        "amount": 36,
+        "category": "医疗",
+        "spent_at": "2026-11-14"
+      },
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": 36.0,
+        "category": "医疗",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": "",
+        "confidence": 0.9
+      }
+    },
+    {
+      "id": "t14",
+      "text": "淘宝买耳机299",
+      "expected": {
+        "ok": true,
+        "amount": 299,
+        "category": "购物",
+        "spent_at": "2026-11-14"
+      },
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": 299.0,
+        "category": "购物",
+        "spent_at": "2026-11-14",
+        "merchant": "淘宝",
+        "note": "",
+        "confidence": 0.9
+      }
+    },
+    {
+      "id": "t15",
+      "text": "机票850",
+      "expected": {
+        "ok": true,
+        "amount": 850,
+        "category": "交通",
+        "spent_at": "2026-11-14"
+      },
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": 850.0,
+        "category": "交通",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": "",
+        "confidence": 0.9
+      }
+    },
+    {
+      "id": "t16",
+      "text": "水电费200",
+      "expected": {
+        "ok": true,
+        "amount": 200,
+        "category": "居住",
+        "spent_at": "2026-11-14"
+      },
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": 200.0,
+        "category": "居住",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": "",
+        "confidence": 0.9
+      }
+    },
+    {
+      "id": "t17",
+      "text": "聚餐AA 150",
+      "expected": {
+        "ok": true,
+        "amount": 150,
+        "category": "餐饮",
+        "spent_at": "2026-11-14"
+      },
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": 150.0,
+        "category": "餐饮",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": "聚餐 AA",
+        "confidence": 0.9
+      }
+    },
+    {
+      "id": "t18",
+      "text": "咖啡32",
+      "expected": {
+        "ok": true,
+        "amount": 32,
+        "category": "餐饮",
+        "spent_at": "2026-11-14"
+      },
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": 32.0,
+        "category": "餐饮",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": "",
+        "confidence": 0.9
+      }
+    },
+    {
+      "id": "t19",
+      "text": "电影票两张90",
+      "expected": {
+        "ok": true,
+        "amount": 90,
+        "category": "娱乐",
+        "spent_at": "2026-11-14"
+      },
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": 90.0,
+        "category": "娱乐",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": "两张电影票",
+        "confidence": 0.85
+      }
+    },
+    {
+      "id": "t20",
+      "text": "宠物猫粮120",
+      "expected": {
+        "ok": true,
+        "amount": 120,
+        "category": "其他",
+        "spent_at": "2026-11-14"
+      },
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": 120.0,
+        "category": "其他",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": "",
+        "confidence": 0.85
+      }
+    }
+  ],
+  "edge_cases": [
+    {
+      "id": "e01_ambiguous_amount",
+      "text": "买衣服花了两百多",
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": null,
+        "category": "购物",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": "金额不明确"
+      },
+      "expected": {
+        "ok": false,
+        "msg_contains": "金额"
+      }
+    },
+    {
+      "id": "e02_hallucinated_amount",
+      "text": "今天打车",
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": 30,
+        "category": "交通",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": ""
+      },
+      "expected": {
+        "ok": false,
+        "msg_contains": "金额"
+      }
+    },
+    {
+      "id": "e03_not_bill",
+      "text": "帮我写一首诗",
+      "ideal": {
+        "is_bill": false,
+        "type": "支出",
+        "amount": null,
+        "category": null,
+        "spent_at": "",
+        "merchant": "",
+        "note": ""
+      },
+      "expected": {
+        "ok": false,
+        "msg_contains": "记账信息"
+      }
+    },
+    {
+      "id": "e04_refusal",
+      "text": "帮我找个贷款口子",
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": null,
+        "category": null,
+        "spent_at": "",
+        "merchant": "",
+        "note": ""
+      },
+      "expected": {
+        "ok": false,
+        "msg_contains": "帮不上忙"
+      }
+    },
+    {
+      "id": "e05_income",
+      "text": "今天兼职收入500元",
+      "ideal": {
+        "is_bill": true,
+        "type": "收入",
+        "amount": 500,
+        "category": "其他",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": ""
+      },
+      "expected": {
+        "ok": true,
+        "amount": 500,
+        "category": "其他",
+        "type": "收入"
+      }
+    },
+    {
+      "id": "e06_chinese_numeral",
+      "text": "前天买奶茶花了十五块",
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": 15,
+        "category": "餐饮",
+        "spent_at": "2026-11-12",
+        "merchant": "",
+        "note": ""
+      },
+      "expected": {
+        "ok": true,
+        "amount": 15,
+        "category": "餐饮",
+        "spent_at": "2026-11-12"
+      }
+    },
+    {
+      "id": "e07_k_unit",
+      "text": "买耳机花了1.5k",
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": "1.5k",
+        "category": "购物",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": ""
+      },
+      "expected": {
+        "ok": true,
+        "amount": 1500,
+        "category": "购物",
+        "spent_at": "2026-11-14"
+      }
+    },
+    {
+      "id": "e08_invalid_category",
+      "text": "买了个东西100",
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": 100,
+        "category": "杂物",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": ""
+      },
+      "expected": {
+        "ok": true,
+        "amount": 100,
+        "category": "其他",
+        "msg_contains": "类别"
+      }
+    },
+    {
+      "id": "e09_default_date",
+      "text": "午饭25",
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": 25,
+        "category": "餐饮",
+        "spent_at": "",
+        "merchant": "",
+        "note": ""
+      },
+      "expected": {
+        "ok": true,
+        "amount": 25,
+        "category": "餐饮",
+        "spent_at": "2026-11-14"
+      }
+    },
+    {
+      "id": "e10_future_date",
+      "text": "明天交房租3000",
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": 3000,
+        "category": "居住",
+        "spent_at": "2026-11-15",
+        "merchant": "",
+        "note": ""
+      },
+      "expected": {
+        "ok": false,
+        "msg_contains": "未来"
+      }
+    },
+    {
+      "id": "e11_merchant_note",
+      "text": "海底捞火锅128",
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": 128,
+        "category": "餐饮",
+        "spent_at": "2026-11-14",
+        "merchant": "海底捞",
+        "note": "火锅"
+      },
+      "expected": {
+        "ok": true,
+        "amount": 128,
+        "category": "餐饮",
+        "merchant": "海底捞",
+        "note": "火锅"
+      }
+    },
+    {
+      "id": "e12_zero_amount",
+      "text": "午饭0元",
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": 0,
+        "category": "餐饮",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": ""
+      },
+      "expected": {
+        "ok": false,
+        "msg_contains": "金额"
+      }
+    },
+    {
+      "id": "e13_approx_not_adjacent",
+      "text": "大概吃饭25",
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": 25,
+        "category": "餐饮",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": ""
+      },
+      "expected": {
+        "ok": true,
+        "amount": 25,
+        "category": "餐饮",
+        "spent_at": "2026-11-14"
+      }
+    },
+    {
+      "id": "e14_interest_expense",
+      "text": "还信用卡利息50",
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": 50,
+        "category": "其他",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": ""
+      },
+      "expected": {
+        "ok": true,
+        "amount": 50,
+        "category": "其他"
+      }
+    },
+    {
+      "id": "e15_reimburse_advance",
+      "text": "报销前先垫付打车32",
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": 32,
+        "category": "交通",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": ""
+      },
+      "expected": {
+        "ok": true,
+        "amount": 32,
+        "category": "交通"
+      }
+    },
+    {
+      "id": "e16_courier_expense",
+      "text": "快递费到账12",
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": 12,
+        "category": "其他",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": ""
+      },
+      "expected": {
+        "ok": true,
+        "amount": 12,
+        "category": "其他"
+      }
+    },
+    {
+      "id": "e17_bread_category",
+      "text": "面包8",
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": 8,
+        "category": null,
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": ""
+      },
+      "expected": {
+        "ok": true,
+        "amount": 8,
+        "category": "餐饮"
+      }
+    },
+    {
+      "id": "e18_phone_bill_category",
+      "text": "手机话费100",
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": 100,
+        "category": null,
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": ""
+      },
+      "expected": {
+        "ok": true,
+        "amount": 100,
+        "category": "其他"
+      }
+    },
+    {
+      "id": "e19_approx_adjacent",
+      "text": "吃饭大概25",
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": 25,
+        "category": "餐饮",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": ""
+      },
+      "expected": {
+        "ok": false,
+        "msg_contains": "金额"
+      }
+    },
+    {
+      "id": "e20_income_salary",
+      "text": "今天发工资8000",
+      "ideal": {
+        "is_bill": true,
+        "type": "收入",
+        "amount": 8000,
+        "category": "其他",
+        "spent_at": "2026-11-14",
+        "merchant": "公司",
+        "note": "工资"
+      },
+      "expected": {
+        "ok": true,
+        "amount": 8000,
+        "category": "其他",
+        "type": "收入"
+      }
+    },
+    {
+      "id": "e21_income_parttime",
+      "text": "兼职收入500",
+      "ideal": {
+        "is_bill": true,
+        "type": "收入",
+        "amount": 500,
+        "category": "其他",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": "兼职"
+      },
+      "expected": {
+        "ok": true,
+        "amount": 500,
+        "category": "其他",
+        "type": "收入"
+      }
+    },
+    {
+      "id": "e22_income_refund",
+      "text": "退款30",
+      "ideal": {
+        "is_bill": true,
+        "type": "收入",
+        "amount": 30,
+        "category": "其他",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": "退款"
+      },
+      "expected": {
+        "ok": true,
+        "amount": 30,
+        "category": "其他",
+        "type": "收入"
+      }
+    },
+    {
+      "id": "e23_expense_stays_expense",
+      "text": "午饭25",
+      "ideal": {
+        "is_bill": true,
+        "type": "支出",
+        "amount": 25,
+        "category": "餐饮",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": ""
+      },
+      "expected": {
+        "ok": true,
+        "amount": 25,
+        "category": "餐饮",
+        "type": "支出"
+      }
+    },
+    {
+      "id": "e24_type_alias_english",
+      "text": "午饭25",
+      "ideal": {
+        "is_bill": true,
+        "type": "expense",
+        "amount": 25,
+        "category": "餐饮",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": ""
+      },
+      "expected": {
+        "ok": true,
+        "amount": 25,
+        "type": "支出"
+      }
+    },
+    {
+      "id": "e25_type_missing_defaults_expense",
+      "text": "午饭25",
+      "ideal": {
+        "is_bill": true,
+        "amount": 25,
+        "category": "餐饮",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": ""
+      },
+      "expected": {
+        "ok": true,
+        "amount": 25,
+        "type": "支出"
+      }
+    },
+    {
+      "id": "e26_red_packet_expense",
+      "text": "给朋友发红包200",
+      "ideal": {
+        "is_bill": true,
+        "amount": 200,
+        "category": "其他",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": ""
+      },
+      "expected": {
+        "ok": true,
+        "amount": 200,
+        "type": "支出"
+      }
+    },
+    {
+      "id": "e27_paid_salary_expense",
+      "text": "今天发工资了8000",
+      "ideal": {
+        "is_bill": true,
+        "amount": 8000,
+        "category": "其他",
+        "spent_at": "2026-11-14",
+        "merchant": "公司",
+        "note": "工资"
+      },
+      "expected": {
+        "ok": true,
+        "amount": 8000,
+        "type": "收入"
+      }
+    },
+    {
+      "id": "e28_refund_income",
+      "text": "退款30",
+      "ideal": {
+        "is_bill": true,
+        "amount": 30,
+        "category": "其他",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": ""
+      },
+      "expected": {
+        "ok": true,
+        "amount": 30,
+        "type": "收入"
+      }
+    },
+    {
+      "id": "e29_fa_gongzi_income",
+      "text": "今天发工资了8000",
+      "ideal": {
+        "is_bill": true,
+        "amount": 8000,
+        "category": "其他",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": ""
+      },
+      "expected": {
+        "ok": true,
+        "amount": 8000,
+        "type": "收入"
+      }
+    },
+    {
+      "id": "e30_fa_jiangjin_income",
+      "text": "发奖金500",
+      "ideal": {
+        "is_bill": true,
+        "amount": 500,
+        "category": "其他",
+        "spent_at": "2026-11-14",
+        "merchant": "",
+        "note": ""
+      },
+      "expected": {
+        "ok": true,
+        "amount": 500,
+        "type": "收入"
+      }
+    }
+  ],
+  "multi_cases": [
+    {
+      "id": "m01_multi_bills",
+      "text": "打车18，奶茶16.5",
+      "ideal": [
+        {
+          "is_bill": true,
+          "type": "支出",
+          "amount": 18,
+          "category": "交通",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": "打车"
+        },
+        {
+          "is_bill": true,
+          "type": "支出",
+          "amount": 16.5,
+          "category": "餐饮",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": "奶茶"
+        }
+      ],
+      "expected": {
+        "ok": true,
+        "count": 2,
+        "amounts": [
+          18,
+          16.5
+        ],
+        "categories": [
+          "交通",
+          "餐饮"
+        ]
+      }
+    },
+    {
+      "id": "m02_total_is_not_a_bill",
+      "text": "午饭25加奶茶15，一共40",
+      "ideal": [
+        {
+          "is_bill": true,
+          "type": "支出",
+          "amount": 25,
+          "category": "餐饮",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": "午饭"
+        },
+        {
+          "is_bill": true,
+          "type": "支出",
+          "amount": 15,
+          "category": "餐饮",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": "奶茶"
+        },
+        {
+          "is_bill": true,
+          "type": "支出",
+          "amount": 40,
+          "category": "餐饮",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": "合计"
+        }
+      ],
+      "expected": {
+        "ok": true,
+        "count": 2,
+        "amounts": [
+          25,
+          15
+        ]
+      }
+    },
+    {
+      "id": "m03_one_missing_amount",
+      "text": "打车18，奶茶",
+      "ideal": [
+        {
+          "is_bill": true,
+          "type": "支出",
+          "amount": 18,
+          "category": "交通",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": "打车"
+        },
+        {
+          "is_bill": true,
+          "type": "支出",
+          "amount": null,
+          "category": "餐饮",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": "奶茶"
+        }
+      ],
+      "expected": {
+        "ok": false,
+        "count": 2,
+        "amount_null_index": 1,
+        "msg_contains": "第 2 笔"
+      }
+    },
+    {
+      "id": "m04_vague_range",
+      "text": "打车三四十",
+      "ideal": [
+        {
+          "is_bill": true,
+          "type": "支出",
+          "amount": 40,
+          "category": "交通",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": ""
+        }
+      ],
+      "expected": {
+        "ok": false,
+        "count": 1,
+        "amount_null_index": 0
+      }
+    },
+    {
+      "id": "m05_not_bill_array",
+      "text": "帮我写一首诗",
+      "ideal": [
+        {
+          "is_bill": false,
+          "type": "支出",
+          "amount": null,
+          "category": null,
+          "spent_at": "",
+          "merchant": "",
+          "note": ""
+        }
+      ],
+      "expected": {
+        "ok": false,
+        "count": 0
+      }
+    },
+    {
+      "id": "m06_vague_after_unit",
+      "text": "打车25元左右",
+      "ideal": [
+        {
+          "is_bill": true,
+          "type": "支出",
+          "amount": 25,
+          "category": "交通",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": ""
+        }
+      ],
+      "expected": {
+        "ok": false,
+        "count": 1,
+        "amount_null_index": 0
+      }
+    },
+    {
+      "id": "m07_clear_amount_with_unit",
+      "text": "打车25块钱",
+      "ideal": [
+        {
+          "is_bill": true,
+          "type": "支出",
+          "amount": 25,
+          "category": "交通",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": ""
+        }
+      ],
+      "expected": {
+        "ok": true,
+        "count": 1,
+        "amounts": [
+          25
+        ]
+      }
+    },
+    {
+      "id": "m08_short_numeral_bai_ershi",
+      "text": "打车百二十",
+      "ideal": [
+        {
+          "is_bill": true,
+          "type": "支出",
+          "amount": 120,
+          "category": "交通",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": ""
+        }
+      ],
+      "expected": {
+        "ok": true,
+        "count": 1,
+        "amounts": [
+          120
+        ]
+      }
+    },
+    {
+      "id": "m09_short_numeral_bai_bashi",
+      "text": "打车百八十",
+      "ideal": [
+        {
+          "is_bill": true,
+          "type": "支出",
+          "amount": 180,
+          "category": "交通",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": ""
+        }
+      ],
+      "expected": {
+        "ok": true,
+        "count": 1,
+        "amounts": [
+          180
+        ]
+      }
+    },
+    {
+      "id": "m10_mixed_income_expense",
+      "text": "昨天兼职收入500，打车花32",
+      "ideal": [
+        {
+          "is_bill": true,
+          "type": "收入",
+          "amount": 500,
+          "category": "其他",
+          "spent_at": "2026-11-13",
+          "merchant": "",
+          "note": "兼职"
+        },
+        {
+          "is_bill": true,
+          "type": "支出",
+          "amount": 32,
+          "category": "交通",
+          "spent_at": "2026-11-13",
+          "merchant": "",
+          "note": "打车"
+        }
+      ],
+      "expected": {
+        "ok": true,
+        "count": 2,
+        "amounts": [
+          500,
+          32
+        ],
+        "types": [
+          "收入",
+          "支出"
+        ]
+      }
+    },
+    {
+      "id": "m11_two_incomes",
+      "text": "工资8000，奖金2000",
+      "ideal": [
+        {
+          "is_bill": true,
+          "type": "收入",
+          "amount": 8000,
+          "category": "其他",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": "工资"
+        },
+        {
+          "is_bill": true,
+          "type": "收入",
+          "amount": 2000,
+          "category": "其他",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": "奖金"
+        }
+      ],
+      "expected": {
+        "ok": true,
+        "count": 2,
+        "amounts": [
+          8000,
+          2000
+        ],
+        "types": [
+          "收入",
+          "收入"
+        ]
+      }
+    },
+    {
+      "id": "m12_mixed_no_type_first",
+      "text": "兼职收入500，打车花32",
+      "ideal": [
+        {
+          "is_bill": true,
+          "amount": 500,
+          "category": "其他",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": ""
+        },
+        {
+          "is_bill": true,
+          "amount": 32,
+          "category": "交通",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": ""
+        }
+      ],
+      "expected": {
+        "ok": true,
+        "count": 2,
+        "amounts": [
+          500,
+          32
+        ],
+        "types": [
+          "收入",
+          "支出"
+        ]
+      }
+    },
+    {
+      "id": "m13_mixed_no_type_expense_first",
+      "text": "打车32，兼职收入500",
+      "ideal": [
+        {
+          "is_bill": true,
+          "amount": 32,
+          "category": "交通",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": ""
+        },
+        {
+          "is_bill": true,
+          "amount": 500,
+          "category": "其他",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": ""
+        }
+      ],
+      "expected": {
+        "ok": true,
+        "count": 2,
+        "amounts": [
+          32,
+          500
+        ],
+        "types": [
+          "支出",
+          "收入"
+        ]
+      }
+    },
+    {
+      "id": "m14_salary_rent_no_type",
+      "text": "工资8000，房租3000",
+      "ideal": [
+        {
+          "is_bill": true,
+          "amount": 8000,
+          "category": "其他",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": ""
+        },
+        {
+          "is_bill": true,
+          "amount": 3000,
+          "category": "居住",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": ""
+        }
+      ],
+      "expected": {
+        "ok": true,
+        "count": 2,
+        "amounts": [
+          8000,
+          3000
+        ],
+        "types": [
+          "收入",
+          "支出"
+        ]
+      }
+    },
+    {
+      "id": "m15_lunch_refund_no_type",
+      "text": "午饭25，退款30",
+      "ideal": [
+        {
+          "is_bill": true,
+          "amount": 25,
+          "category": "餐饮",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": ""
+        },
+        {
+          "is_bill": true,
+          "amount": 30,
+          "category": "其他",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": ""
+        }
+      ],
+      "expected": {
+        "ok": true,
+        "count": 2,
+        "amounts": [
+          25,
+          30
+        ],
+        "types": [
+          "支出",
+          "收入"
+        ]
+      }
+    },
+    {
+      "id": "m16_chinese_mixed",
+      "text": "兼职收入五百，打车花三十二",
+      "ideal": [
+        {
+          "is_bill": true,
+          "amount": 500,
+          "category": "其他",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": ""
+        },
+        {
+          "is_bill": true,
+          "amount": 32,
+          "category": "交通",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": ""
+        }
+      ],
+      "expected": {
+        "ok": true,
+        "count": 2,
+        "amounts": [
+          500,
+          32
+        ],
+        "types": [
+          "收入",
+          "支出"
+        ]
+      }
+    },
+    {
+      "id": "m17_chinese_mixed_reversed",
+      "text": "打车三十二，兼职收入五百",
+      "ideal": [
+        {
+          "is_bill": true,
+          "amount": 32,
+          "category": "交通",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": ""
+        },
+        {
+          "is_bill": true,
+          "amount": 500,
+          "category": "其他",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": ""
+        }
+      ],
+      "expected": {
+        "ok": true,
+        "count": 2,
+        "amounts": [
+          32,
+          500
+        ],
+        "types": [
+          "支出",
+          "收入"
+        ]
+      }
+    }
+  ]
+}
