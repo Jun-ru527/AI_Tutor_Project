@@ -30,6 +30,25 @@ _MIME = {
 }
 
 
+def _detect_mime(raw: bytes, path: str = "") -> str:
+    """按文件头判断真实格式，而不是只看扩展名。
+
+    实测遇到过：文件名是 .jpg，内容其实是 PNG。按扩展名声明成 image/jpeg 时，
+    视觉接口可能直接拒收，表现成"识别失败"。读前几个字节就能认准。
+    """
+    if raw[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if raw[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        return "image/webp"
+    if raw[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if raw[:2] == b"BM":
+        return "image/bmp"
+    return _MIME.get(os.path.splitext(str(path))[1].lower(), "image/jpeg")
+
+
 def _parse_model_json(raw):
     """把模型返回的文本变成 Python 对象。
 
@@ -94,8 +113,7 @@ def parse_image(image_path):
             return {"ok": False, "data": None,
                     "msg": "图片太大（超过 6MB），请压缩后再上传"}
 
-        ext = os.path.splitext(str(image_path))[1].lower()
-        mime = _MIME.get(ext, "image/jpeg")
+        mime = _detect_mime(raw_bytes, image_path)
         img_b64 = base64.b64encode(raw_bytes).decode()
 
         messages = prompts.image_messages()

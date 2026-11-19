@@ -630,6 +630,27 @@ def log_ai_call(raw_input: str, data, ok: bool) -> None:
     call_module(db, "log_ai", str(raw_input or "")[:500], payload[:2000], default=None)
 
 
+def flash(message: str, kind: str = "success") -> None:
+    """把提示存进会话，等下一次 rerun 再显示。
+
+    为什么需要它：原来写完 st.success() 紧接着就 st.rerun()，
+    提示还没画到屏幕上就被重跑清掉了 —— 用户点完按钮只看到页面闪一下，
+    完全不知道自己到底成功没有。改成"先存起来、下次渲染再显示"。
+    """
+    st.session_state["flash_message"] = message
+    st.session_state["flash_kind"] = kind
+
+
+def show_flash() -> None:
+    """在页面顶部把上一次操作的结果显示出来（显示一次就清掉）。"""
+    message = st.session_state.pop("flash_message", "")
+    if not message:
+        return
+    kind = st.session_state.pop("flash_kind", "success")
+    render = {"success": st.success, "warning": st.warning, "error": st.error}.get(kind, st.success)
+    render(message)
+
+
 def page_record() -> None:
     st.subheader("记一笔")
     st.caption("一句话记账，或上传小票/支付截图。识别结果需你确认或修正后才入库。")
@@ -766,10 +787,12 @@ def page_record() -> None:
                 failed += 1
                 if msg:
                     messages.append(msg)
+        message = ""
         if success:
-            st.success(f"成功入库 {success} 笔")
+            message = f"成功入库 {success} 笔"
         if failed:
-            st.error(f"{failed} 笔入库失败：" + "；".join(messages[:3]))
+            message += ("；" if message else "") + f"{failed} 笔入库失败：" + "；".join(messages[:3])
+        flash(message, "error" if failed else "success")
         set_pending([], "")
         st.rerun()
 
@@ -1195,6 +1218,7 @@ def main() -> None:
 
     st.title("个人记账与消费分析 AI 助手")
     st.caption("一句话记账 / 小票 OCR / 自动分类 / 自然语言查账 / 预算提醒")
+    show_flash()
 
     with st.sidebar:
         st.header("运行状态")
@@ -1231,18 +1255,18 @@ def main() -> None:
             if st.button("重置演示数据（清空后写入 16 笔）", type="primary"):
                 ok_count, fail_count, deleted = import_demo_to_db()
                 if fail_count:
-                    st.warning(f"已清空 {deleted} 笔，写入 {ok_count} 笔，"
-                               f"失败 {fail_count} 笔，请检查 db.add_bill")
+                    flash(f"已清空 {deleted} 笔，写入 {ok_count} 笔，"
+                          f"失败 {fail_count} 笔，请检查 db.add_bill", "warning")
                 else:
-                    st.success(f"已清空 {deleted} 笔，重新写入 {ok_count} 笔")
+                    flash(f"已清空 {deleted} 笔，重新写入 {ok_count} 笔")
                 st.rerun()
 
             if st.button("清空全部账单（含手记）"):
                 ok_clear, cleared, msg = call_module(db, "clear_all_bills", default=None)
                 if ok_clear and isinstance(cleared, int):
-                    st.success(f"已清空 {cleared} 笔账单")
+                    flash(f"已清空 {cleared} 笔账单")
                 else:
-                    st.error(f"清空失败：{msg}")
+                    flash(f"清空失败：{msg}", "error")
                 st.rerun()
 
         st.divider()

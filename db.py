@@ -81,6 +81,18 @@ def init_db ():
 def add_bill (data):
     row=dict(data)
     row.setdefault("is_demo",0)   # 没传就按手记算，演示数据由界面显式传 1
+
+    # 金额必须落在 (0, 100 万] 之内。
+    # 界面上的 number_input 虽然限制了最小值，但函数本身也得守住：
+    # 任何绕过界面的调用（批量导入、脚本、以后加的 API）都能写进 0 元、负数、
+    # 甚至 1 亿元的记录，统计和图表会直接失真，而且很难查。
+    try:
+        amount=float(row.get("amount"))
+    except (TypeError, ValueError):
+        return False
+    if not (0 < amount <= 1_000_000):
+        return False
+
     conn=None
     try:
         conn=_get_connection()
