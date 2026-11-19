@@ -1,67 +1,141 @@
 #君如负责ai框架模块
-import os
+import base64
 import json
-import prompts # 🚨 引入队友合并进来的提示词模块
+import os
+
+import prompts  # 队友的提示词模块：文本/图片两套 messages 都在这里
 from dotenv import load_dotenv
 from openai import OpenAI
 
 load_dotenv()
 
-# 1. 初始化文本大模型（用你的智谱 Key）
-client_text = OpenAI(
-    api_key=os.getenv("ZHIPU_API_KEY"),
-    base_url="https://open.bigmodel.cn/api/paas/v4/"
-)
+TEXT_MODEL = "glm-4-flash"
+VISION_MODEL = "glm-4v-flash"
+BASE_URL = "https://open.bigmodel.cn/api/paas/v4/"
 
-# 2. 初始化视觉大模型（如果你还要做图片识别）
-client_vision = OpenAI(
-    api_key=os.getenv("ZHIPU_API_KEY"),
-    base_url="https://open.bigmodel.cn/api/paas/v4/"
-)
+# 1. 文本模型
+client_text = OpenAI(api_key=os.getenv("ZHIPU_API_KEY"), base_url=BASE_URL)
+
+# 2. 视觉模型
+client_vision = OpenAI(api_key=os.getenv("ZHIPU_API_KEY"), base_url=BASE_URL)
+
+# 常见图片后缀 -> MIME，保证 base64 前缀和真实格式一致（PNG 别再谎称 jpeg）
+_MIME = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+    ".gif": "image/gif",
+}
+
+
+def _parse_model_json(raw):
+    """把模型返回的文本变成 Python 对象。
+
+    优先用 prompts.try_parse_json：它已经处理了 ```json 包裹、多余文字、
+    尾逗号这些情况，比裸 json.loads 稳得多。
+    """
+    if isinstance(raw, (dict, list)):
+        return raw
+    parser = getattr(prompts, "try_parse_json", None)
+    if parser is not None:
+        try:
+            payload, _err = parser(raw)
+            if payload is not None:
+                return payload
+        except Exception:
+            pass
+    cleaned = str(raw).replace("```json", "").replace("```", "").strip()
+    return json.loads(cleaned)
+
 
 # ==========================================
 # 函数 1：真实解析文本记账
 # ==========================================
 def parse_text(text):
+    """一句话 -> 模型 JSON（数组，可含多笔、可含收入）。
+
+    返回 {"ok": bool, "data": list|dict|None, "msg": str}
+    """
     try:
-        # 🚨 直接调用她写好的函数！她第 5 行写了，传一句话进去，就能拿回模型要的格式
-        messages = prompts.text_messages(text)
-        
+        messages = prompts.text_messages(text)  # 里面已经带了今天/昨天的时间上下文
         response = client_text.chat.completions.create(
-            model="glm-4-flash",
-            messages=messages # 🚨 这里直接用她生成的 messages
+            model=TEXT_MODEL,
+            messages=messages,
+            temperature=0,
         )
-        
-        raw_json_str = response.choices[0].message.content
-        clean_str = raw_json_str.replace("```json", "").replace("```", "").strip()
-        
-        return {"ok": True, "data": json.loads(clean_str), "msg": "文本解析成功"}
-        
+        data = _parse_model_json(response.choices[0].message.content)
+        return {"ok": True, "data": data, "msg": "文本解析成功"}
     except Exception as e:
-        return {"ok": False, "data": None, "msg": f"解析失败: {str(e)}"}
+        return {"ok": False, "data": None, "msg": f"解析失败: {e}"}
+
 
 # ==========================================
-# 函数 2：真实解析图片记账 (你需要自己补全图片的 Prompt)
+# 函数 2：真实解析图片记账（小票 / 支付截图）
 # ==========================================
 def parse_image(image_path):
-    import base64
+    """图片 -> 模型 JSON。
+
+    关键改动：以前这里自己写了一句"请提取金额、分类…只返回JSON"，
+    没有任何字段格式约束，模型就返回了中文键名
+    （{"金额":2400,"分类":"兼职收入","收支类型":"收入"}），
+    界面按 amount/type 去取全都是空 -> 表现成"什么都没识别出来"。
+
+    现在改用 prompts.image_messages()：
+      - 有严格的 JSON 字段和后缀规范
+      - 带"今天/昨天"上下文，日期能落到正确的一天
+      - 带七类分类表和收支类型判定规则
+    """
     try:
         with open(image_path, "rb") as f:
-            img_base = base64.b64encode(f.read()).decode('utf-8')
-            
-        response = client_vision.chat.completions.create(
-            model="glm-4v-flash", # 视觉模型
-            messages=[{"role": "user", "content": [
-                {"type": "text", "text": "请提取金额、分类、日期、商户、备注、收支类型，只返回JSON。"},
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_base}"}}
-            ]}]
+            raw_bytes = f.read()
+        if len(raw_bytes) > 6 * 1024 * 1024:
+            return {"ok": False, "data": None,
+                    "msg": "图片太大（超过 6MB），请压缩后再上传"}
+
+        ext = os.path.splitext(str(image_path))[1].lower()
+        mime = _MIME.get(ext, "image/jpeg")
+        img_b64 = base64.b64encode(raw_bytes).decode()
+
+        messages = prompts.image_messages()
+        system_text = ""
+        user_text = ""
+        for msg in messages:
+            if msg.get("role") == "system":
+                system_text = msg.get("content", "")
+            else:
+                user_text = msg.get("content", "")
+
+        # 视觉模型对 system 角色支持不稳定，把系统提示并进 user 文本一起发
+        text_part = (system_text + "\n\n" + user_text).strip()
+        # 实测补充：工资条、银行流水、转账记录也属于"一笔账"，
+        # 否则模型会把它们当成"不是小票"，is_bill 填 false，整笔被丢掉。
+        text_part += (
+            "\n\n# 补充说明\n"
+            "工资条 / 收入明细 / 银行流水 / 转账记录截图，同样属于一笔账，is_bill 填 true。"
+            "「实发到账 / 应发合计」这类字段取实发金额。"
         )
-        raw_json_str = response.choices[0].message.content
-        clean_str = raw_json_str.replace("```json", "").replace("```", "").strip()
-        return {"ok": True, "data": json.loads(clean_str), "msg": "图片解析成功"}
+
+        response = client_vision.chat.completions.create(
+            model=VISION_MODEL,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": text_part},
+                    {"type": "image_url",
+                     "image_url": {"url": f"data:{mime};base64,{img_b64}"}},
+                ],
+            }],
+            temperature=0,
+        )
+        data = _parse_model_json(response.choices[0].message.content)
+        return {"ok": True, "data": data, "msg": "图片解析成功"}
     except Exception as e:
-        return {"ok": False, "data": None, "msg": f"解析失败: {str(e)}"}
+        return {"ok": False, "data": None, "msg": f"解析失败: {e}"}
+
+
 if __name__ == "__main__":
-    print(">>> 测试开始 <<<")  # 加上这句，如果这句没出来，说明程序根本没跑
-    res = parse_text("打车花了32块")
-    print(">>> 解析结果是：", res)
+    print(">>> 测试开始 <<<")
+    print(parse_text("昨天打车 32"))
+    print(parse_text("发工资了 8000"))
