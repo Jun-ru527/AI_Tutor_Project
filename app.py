@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import calendar
 import html
+import json
 import re
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -138,6 +139,7 @@ def init_state() -> None:
         "demo_budgets": dict(DEMO_BUDGETS),
         "pending_bills": [],    # 待用户确认/修正的识别结果
         "parse_notice": "",     # 解析阶段的提示语
+        "parse_token": 0,       # 每解析一次 +1，用来刷新草稿卡片的控件 key
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -188,23 +190,91 @@ def call_module(module, func_name: str, *args, default=None):
     return True, result, ""
 
 
+# 模型有时返回中文键名（尤其视觉模型），这里做一层别名，避免"全都识别不出来"
+_KEY_ALIASES = {
+    "amount": ("amount", "金额", "数额", "money", "价格", "实付", "合计", "total"),
+    "category": ("category", "分类", "类别", "类目"),
+    "spent_at": ("spent_at", "日期", "时间", "date", "消费日期", "交易日期"),
+    "merchant": ("merchant", "商户", "商家", "店铺", "来源"),
+    "note": ("note", "备注", "说明", "摘要", "desc"),
+    "type": ("type", "收支类型", "收支", "类型", "direction"),
+}
+_ALL_KEYS = {key for group in _KEY_ALIASES.values() for key in group} | {"is_bill", "confidence"}
+
+# 收支类型的各种说法，统一成 BILL_TYPES 里的两个字
+_TYPE_ALIASES = {
+    "支出": TYPE_EXPENSE, "消费": TYPE_EXPENSE, "付款": TYPE_EXPENSE, "付": TYPE_EXPENSE,
+    "expense": TYPE_EXPENSE, "cost": TYPE_EXPENSE, "out": TYPE_EXPENSE, "-": TYPE_EXPENSE,
+    "收入": TYPE_INCOME, "收款": TYPE_INCOME, "到账": TYPE_INCOME, "收": TYPE_INCOME,
+    "income": TYPE_INCOME, "in": TYPE_INCOME, "+": TYPE_INCOME,
+}
+
+
+def _pick(item: dict, field: str):
+    """按字段别名从模型结果里取值，先英文键、后中文键。"""
+    for key in _KEY_ALIASES[field]:
+        value = item.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _norm_type(value) -> str:
+    text = str(value or "").strip()
+    if text in _TYPE_ALIASES:
+        return _TYPE_ALIASES[text]
+    return _TYPE_ALIASES.get(text.lower(), "")
+
+
+def _norm_amount(value) -> float:
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value or "")
+    for junk in (",", "￥", "¥", "元", " "):
+        text = text.replace(junk, "")
+    found = re.search(r"-?\d+(?:\.\d+)?", text)
+    return float(found.group()) if found else 0.0
+
+
+def _norm_date(value) -> tuple[str, bool]:
+    """把 '2026-11-17' / '2026/11/17' / '2026年11月17日' 统一成 YYYY-MM-DD。
+
+    返回 (日期, 是否被夹到今天)。
+    认不出来就用今天——绝不让 '昨天' 这种原文直接进数据库；
+    晚于今天的日期也夹到今天，否则这笔账会跑进下个月的统计里、本月看不到。
+    """
+    text = str(value or "").strip()
+    today = date.today()
+    found = re.search(r"(\d{4})\s*[-/年.]\s*(\d{1,2})\s*[-/月.]\s*(\d{1,2})", text)
+    if found:
+        year, month, day = (int(part) for part in found.groups())
+        try:
+            parsed = date(year, month, day)
+        except ValueError:
+            return today.isoformat(), False
+        if parsed > today:
+            return today.isoformat(), True
+        return parsed.isoformat(), False
+    return today.isoformat(), False
+
+
 def normalize_bills(data) -> list[dict]:
     """
-    把队友返回的 data 规整成 6 字段账单列表。
+    把模型返回的 data 规整成 6 字段账单列表。
 
-    ai_core 直接把模型输出的 JSON 原样放进 data，实际可能是：
-      1. 单个 6 字段字典
-      2. 字典列表（"一句话多笔"）
+    实际可能是：
+      1. 单个字典
+      2. 字典列表（"一句话多笔"，支出和收入可以混在一起）
       3. 外层再包一层，如 {"bills": [...]} / {"records": [...]} / {"data": [...]}
-      4. {"ok":..., "data":...} 嵌套（模型照着提示词又吐了一层）
-    这里统一摊平，避免丢数据。
+      4. 中文键名的字典（视觉模型常见）
+      5. is_bill=false（闲聊、越界请求），这种要丢掉
     """
     if data is None:
         return []
 
-    # 先剥离可能的外层包装
+    # 先剥离可能的外层包装（用中英文字段名一起判断，避免把中文键的账单又拆一层）
     for _ in range(3):
-        if isinstance(data, dict) and not any(k in data for k in BILL_FIELDS):
+        if isinstance(data, dict) and not (set(data) & _ALL_KEYS):
             for key in ("bills", "records", "items", "list", "data", "result"):
                 if key in data:
                     data = data[key]
@@ -220,27 +290,34 @@ def normalize_bills(data) -> list[dict]:
     for item in items:
         if not isinstance(item, dict):
             continue
-        try:
-            amount = float(item.get("amount") or 0)
-        except (TypeError, ValueError):
-            amount = 0.0
 
-        bill_type = item.get("type")
-        if bill_type not in BILL_TYPES:
-            bill_type = TYPE_EXPENSE
+        amount = _norm_amount(_pick(item, "amount"))
+        # 模型说"这不是一笔账"时，只有金额也确实是空的才丢掉。
+        # 有些图（工资明细、转账流水）会被判成"不是小票"，但字段其实读得很准，
+        # 这时宁可让用户确认，也不要把整笔悄悄扔掉。
+        flag = str(item.get("is_bill", True)).strip().lower()
+        if flag in ("false", "0", "no") and amount <= 0:
+            continue
 
-        spent_at = str(item.get("spent_at") or date.today().isoformat())
+        spent_at, date_clamped = _norm_date(_pick(item, "spent_at"))
+        note = str(_pick(item, "note") or "")
+        if date_clamped:
+            note = (note + "；" if note else "") + "原日期在未来，已按今天记"
+
         bills.append(
             {
                 "amount": amount,
-                "category": str(item.get("category") or "其他"),
-                "spent_at": spent_at[:10],
-                "merchant": str(item.get("merchant") or ""),
-                "note": str(item.get("note") or ""),
-                "type": bill_type,
+                "category": str(_pick(item, "category") or "其他"),
+                "spent_at": spent_at,
+                "merchant": str(_pick(item, "merchant") or ""),
+                "note": note,
+                # 关键：这里以前只认 "支出"/"收入" 两个词，其余一律当支出，
+                # 于是模型写的英文、带空格、或干脆没这个字段时，收入就永远变支出。
+                "type": _norm_type(_pick(item, "type")) or TYPE_EXPENSE,
             }
         )
     return bills
+
 
 
 def bills_to_frame(bills: list[dict]) -> pd.DataFrame:
@@ -516,6 +593,43 @@ def demo_parse(text: str) -> list[dict]:
     ]
 
 
+def bump_parse_token() -> None:
+    """每解析一次就换一批控件 key。
+
+    为什么必须换：Streamlit 的 selectbox / date_input 带 key 之后会把值记在
+    session_state 里，之后即使 index= 传了新的默认值也不生效。
+    结果就是——上一笔记的是"支出"，这一笔明明是收入，卡片上却还显示"支出"；
+    日期也跟着上一笔走。换个 token 等于换了一批全新的控件。
+    """
+    st.session_state["parse_token"] = int(st.session_state.get("parse_token", 0)) + 1
+
+
+def parse_token() -> str:
+    return str(st.session_state.get("parse_token", 0))
+
+
+def set_pending(bills: list[dict], notice: str = "") -> None:
+    st.session_state["pending_bills"] = bills
+    st.session_state["parse_notice"] = notice
+    bump_parse_token()
+
+
+def log_ai_call(raw_input: str, data, ok: bool) -> None:
+    """把一次 AI 调用写进 ai_logs 表（本地留痕）。
+
+    为什么放在界面层而不是 ai_core：ai_core 只负责调模型，不该知道数据库；
+    由 app 统一决定"这次调用要不要记下来"，和 add_bill 的分层一致。
+    演示模式不写，避免把联调数据混进真实账本。
+    """
+    if is_demo():
+        return
+    try:
+        payload = json.dumps(data, ensure_ascii=False) if ok else f"调用失败：{data}"
+    except (TypeError, ValueError):
+        payload = str(data)
+    call_module(db, "log_ai", str(raw_input or "")[:500], payload[:2000], default=None)
+
+
 def page_record() -> None:
     st.subheader("记一笔")
     st.caption("一句话记账，或上传小票/支付截图。识别结果需你确认或修正后才入库。")
@@ -528,44 +642,59 @@ def page_record() -> None:
             if not text.strip():
                 st.warning("先输入一句话再解析。")
             elif is_demo():
-                st.session_state["pending_bills"] = demo_parse(text)
-                st.session_state["parse_notice"] = "演示模式：使用内置解析器"
+                set_pending(demo_parse(text), "演示模式：使用内置解析器")
             else:
                 ok, data, msg = call_module(ai_core, "parse_text", text, default=None)
                 if not ok or data is None:
-                    st.session_state["pending_bills"] = demo_parse(text)
-                    st.session_state["parse_notice"] = msg or "解析失败，已填入示例结果供演示"
+                    log_ai_call(text, msg or "解析失败", False)
+                    set_pending(demo_parse(text), msg or "解析失败，已填入示例结果供演示")
                 else:
-                    st.session_state["pending_bills"] = normalize_bills(data)
-                    st.session_state["parse_notice"] = msg or "解析成功"
+                    log_ai_call(text, data, True)
+                    set_pending(normalize_bills(data), msg or "解析成功")
     else:
-        uploaded = st.file_uploader("上传小票或支付截图", type=("png", "jpg", "jpeg"))
-        if uploaded is not None:
-            show_image(uploaded)
+        uploads = st.file_uploader(
+            "上传小票或支付截图（可一次选多张）",
+            type=("png", "jpg", "jpeg"),
+            accept_multiple_files=True,
+        )
+        uploads = uploads or []
+        if uploads:
+            preview_cols = st.columns(min(len(uploads), 3))
+            for i, file in enumerate(uploads):
+                with preview_cols[i % len(preview_cols)]:
+                    show_image(file)
+
         if st.button("识别", type="primary", key="parse_image"):
-            if uploaded is None:
-                st.warning("先上传一张图片再识别。")
+            if not uploads:
+                st.warning("先上传至少一张图片再识别。")
             elif is_demo():
-                st.session_state["pending_bills"] = [
-                    {
+                set_pending(
+                    [{
                         "amount": 38.5,
                         "category": "餐饮",
                         "spent_at": date.today().isoformat(),
                         "merchant": "示例小票",
                         "note": "OCR 演示结果",
                         "type": TYPE_EXPENSE,
-                    }
-                ]
-                st.session_state["parse_notice"] = "演示模式：返回示例识别结果"
+                    }],
+                    "演示模式：返回示例识别结果",
+                )
             else:
-                image_path = save_uploaded_file(uploaded)
-                ok, data, msg = call_module(ai_core, "parse_image", image_path, default=None)
-                if not ok or data is None:
-                    st.session_state["pending_bills"] = []
-                    st.session_state["parse_notice"] = msg or "识别失败，请改用一句话记账"
-                else:
-                    st.session_state["pending_bills"] = normalize_bills(data)
-                    st.session_state["parse_notice"] = msg or "识别成功"
+                collected: list[dict] = []
+                failed: list[str] = []
+                for file in uploads:
+                    image_path = save_uploaded_file(file)
+                    ok, data, msg = call_module(ai_core, "parse_image", image_path, default=None)
+                    ok_call = bool(ok and data is not None)
+                    log_ai_call(file.name, data if ok_call else (msg or "识别失败"), ok_call)
+                    if ok and data is not None:
+                        collected.extend(normalize_bills(data))
+                    else:
+                        failed.append(f"{file.name}：{msg or '识别失败'}")
+                notice = f"识别成功，共 {len(collected)} 笔" if collected else "识别失败"
+                if failed:
+                    notice += "；失败 " + "；".join(failed[:2])
+                set_pending(collected, notice)
 
     notice = st.session_state.get("parse_notice", "")
     if notice:
@@ -579,6 +708,7 @@ def page_record() -> None:
     st.markdown(f"**识别到 {len(pending)} 笔，请确认或修正后入库**")
 
     edited = []
+    token = parse_token()
     for index, bill in enumerate(pending):
         with st.expander(f"第 {index + 1} 笔", expanded=True):
             col_a, col_b = st.columns(2)
@@ -586,29 +716,29 @@ def page_record() -> None:
                 "收支类型",
                 BILL_TYPES,
                 index=BILL_TYPES.index(bill["type"]) if bill["type"] in BILL_TYPES else 0,
-                key=f"type_{index}",
+                key=f"type_{token}_{index}",
             )
             amount = col_b.number_input(
                 "金额",
                 min_value=0.0,
                 step=1.0,
                 value=float(bill["amount"]),
-                key=f"amount_{index}",
+                key=f"amount_{token}_{index}",
             )
             categories = INCOME_CATEGORIES if bill_type == TYPE_INCOME else EXPENSE_CATEGORIES
             category = col_a.selectbox(
                 "分类",
                 categories,
                 index=categories.index(bill["category"]) if bill["category"] in categories else len(categories) - 1,
-                key=f"category_{index}",
+                key=f"category_{token}_{index}",
             )
             spent_at = col_b.date_input(
                 "消费日期",
                 value=date.fromisoformat(bill["spent_at"]) if _valid_date(bill["spent_at"]) else date.today(),
-                key=f"date_{index}",
+                key=f"date_{token}_{index}",
             )
-            merchant = col_a.text_input("商户", value=bill["merchant"], key=f"merchant_{index}")
-            note = col_b.text_input("备注（原话）", value=bill["note"], key=f"note_{index}")
+            merchant = col_a.text_input("商户", value=bill["merchant"], key=f"merchant_{token}_{index}")
+            note = col_b.text_input("备注（原话）", value=bill["note"], key=f"note_{token}_{index}")
             edited.append(
                 {
                     "amount": float(amount),
@@ -640,13 +770,11 @@ def page_record() -> None:
             st.success(f"成功入库 {success} 笔")
         if failed:
             st.error(f"{failed} 笔入库失败：" + "；".join(messages[:3]))
-        st.session_state["pending_bills"] = []
-        st.session_state["parse_notice"] = ""
+        set_pending([], "")
         st.rerun()
 
     if col_cancel.button("放弃"):
-        st.session_state["pending_bills"] = []
-        st.session_state["parse_notice"] = ""
+        set_pending([], "")
         st.rerun()
 
 
@@ -928,6 +1056,18 @@ def page_details() -> None:
     with st.expander("表格视图（全部字段）"):
         show_table(filtered[list(BILL_FIELDS)])
 
+    with st.expander("AI 调用记录（最近 10 次）"):
+        st.caption("每次「解析 / 识别」都会在这里留一条：你说了什么、模型返回了什么。"
+                   "记录只存在本地 ledger.db 的 ai_logs 表里，答辩前可以清空。")
+        ok_log, logs, _ = call_module(db, "get_ai_logs", 10, default=None)
+        if not ok_log or not logs:
+            st.caption("还没有记录。去「记一笔」解析一次，就会出现在这里。")
+        else:
+            st.dataframe(pd.DataFrame(logs), width="stretch", hide_index=True)
+            if st.button("清空这些记录", key="clear_ai_logs"):
+                call_module(db, "clear_ai_logs", default=None)
+                st.rerun()
+
 
 # ---------------------------------------------------------------------------
 # 页面：预算与超支提醒
@@ -1014,24 +1154,39 @@ def bootstrap() -> str:
         return "数据库模块尚未就绪，已跳过初始化"
     ok, _, msg = call_module(db, "init_db", default=None)
     if ok:
-        return "数据库已初始化（ledger.db）"
+        return "数据库已连接（ledger.db）"
     return msg or "数据库初始化失败"
 
 
-def import_demo_to_db() -> tuple[int, int]:
+def import_demo_to_db() -> tuple[int, int, int]:
     """
-    把内置演示账单写入真实数据库，返回 (成功数, 失败数)。
+    重置演示数据：先清空 bills 表，再写入内置的 16 笔示例账单。
 
-    考核要求「准备演示数据，使评审无需自行构造数据即可跑通主流程」。
-    真实模式下数据库初始为空，侧栏提供这个入口，评审点一下即可看到全部图表。
-    逐条走 db.add_bill(data)，与界面记账完全同一条链路。
+    返回 (写入成功数, 失败数, 清空数)。注意是"清空再写"，不是"追加"。
+
+    以前是只插不删，点一次多 16 笔，点十几次就成了 200 多笔、支出合计几十万。
+    现在优先调用 db.reset_demo_bills()，它在一个事务里完成「删+写」：
+    两个标签页同时点、或者手快连点两下，后到的请求会排队，不会交错成 31 笔。
     """
+    # 首选：原子版本（一个事务里先清空再整批写入）
+    ok_all, result, _ = call_module(db, "reset_demo_bills", DEMO_BILLS, default=None)
+    if ok_all and isinstance(result, (tuple, list)) and len(result) == 2:
+        return int(result[0]), 0, int(result[1])
+
+    # 兜底：老版本 db.py 没有这个函数时，退回"先清空再逐条写"（并发下可能交错，仅作降级）
+    ok_clear, deleted, _ = call_module(db, "clear_all_bills", default=None)
+    if not ok_clear:
+        return 0, 0, 0
+    deleted = int(deleted or 0)
+
     success = failed = 0
     for bill in DEMO_BILLS:
-        ok, _, _ = call_module(db, "add_bill", bill, default=None)
+        payload = dict(bill)
+        payload["is_demo"] = 1      # 标记成演示数据，之后可以一键只清这部分
+        ok, _, _ = call_module(db, "add_bill", payload, default=None)
         success += 1 if ok else 0
         failed += 0 if ok else 1
-    return success, failed
+    return success, failed, deleted
 
 
 def main() -> None:
@@ -1051,6 +1206,11 @@ def main() -> None:
         st.caption(bootstrap())
         st.caption(f"ai_core：{'已加载' if ai_core else '未就绪'}"
                    f"　db：{'已加载' if db else '未就绪'}")
+        # 真实条数：不要用写死的"已初始化"当证据，这里读的是数据库里的实际行数
+        if not is_demo():
+            ok_n, n_bills, _ = call_module(db, "count_bills", default=None)
+            if ok_n and isinstance(n_bills, int):
+                st.caption(f"当前账本：{n_bills} 笔")
 
         # 显示导入失败原因，最常见是 .env 里缺 ZHIPU_API_KEY 导致 OpenAI 初始化失败
         if AI_CORE_IMPORT_ERROR:
@@ -1065,15 +1225,24 @@ def main() -> None:
             st.info("当前为演示数据模式。取消勾选可切换到队友的真实接口。")
         else:
             st.divider()
-            st.markdown("**导入演示数据**")
-            st.caption("真实数据库初始为空。点一次即可写入 16 笔示例账单，"
-                       "用于评审复现与图表展示（重复点击会重复写入）。")
-            if st.button("导入示例账单到数据库"):
-                ok_count, fail_count = import_demo_to_db()
+            st.markdown("**演示数据**")
+            st.caption("「重置演示数据」会先清空 bills 表，再写入 16 笔示例账单。"
+                       "点几次结果都是 16 笔，不会叠加。")
+            if st.button("重置演示数据（清空后写入 16 笔）", type="primary"):
+                ok_count, fail_count, deleted = import_demo_to_db()
                 if fail_count:
-                    st.warning(f"成功 {ok_count} 笔，失败 {fail_count} 笔，请检查 db.add_bill")
+                    st.warning(f"已清空 {deleted} 笔，写入 {ok_count} 笔，"
+                               f"失败 {fail_count} 笔，请检查 db.add_bill")
                 else:
-                    st.success(f"已写入 {ok_count} 笔示例账单")
+                    st.success(f"已清空 {deleted} 笔，重新写入 {ok_count} 笔")
+                st.rerun()
+
+            if st.button("清空全部账单（含手记）"):
+                ok_clear, cleared, msg = call_module(db, "clear_all_bills", default=None)
+                if ok_clear and isinstance(cleared, int):
+                    st.success(f"已清空 {cleared} 笔账单")
+                else:
+                    st.error(f"清空失败：{msg}")
                 st.rerun()
 
         st.divider()
