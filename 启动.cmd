@@ -1,7 +1,14 @@
-ï»¿@echo off
-chcp 65001 >nul
-cd /d "%~dp0"
-echo æ­£åœ¨å¯åŠ¨è®°è´¦åŠ©æ‰‹ï¼Œæµè§ˆå™¨ä¼šè‡ªåŠ¨æ‰“å¼€ http://localhost:8501
-echo å…³é—­è¿™ä¸ªé»‘çª—å£å°±ç­‰äºŽåœæ­¢ç¨‹åºã€‚
+@echo off
+chcp 936 >nul
+title ¼ÇÕËÖúÊÖ
+cd /d "C:\Users\ÕÔ¾ýÈç\Documents\AI_Tutor_Project"
+echo ============================================
+echo    ¸öÈË¼ÇÕËÖúÊÖ ÕýÔÚÆô¶¯
+echo    ä¯ÀÀÆ÷»á×Ô¶¯´ò¿ª http://localhost:8501
+echo    ¹Ø±ÕÕâ¸öºÚ´°¿Ú = Í£Ö¹³ÌÐò
+echo ============================================
+echo.
 python -m streamlit run app.py
-pause
+echo.
+echo ³ÌÐòÒÑÍ£Ö¹£¬°´ÈÎÒâ¼ü¹Ø±Õ¡£
+pause >nul
