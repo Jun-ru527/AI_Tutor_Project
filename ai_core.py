@@ -69,6 +69,25 @@ def _parse_model_json(raw):
     return json.loads(cleaned)
 
 
+def _clean_and_shape(raw, source_text=None):
+    """把模型原始输出交给 prompts.clean_many 做校验，再转成契约形状。
+
+    为什么要有这一层：clean_many 返回的也是 {"ok","data","msg"}，但它有一个
+    和契约不一致的地方——校验没通过时，data 里仍然可能带着「待用户补全的草稿」
+    （比如金额缺失，amount 为 None）。而我们的契约规定：ok=False 时 data 必须是 None。
+
+    所以这里做一次映射，既保留校验结论，又不破坏契约：
+      - 有草稿 → ok=True，草稿交给界面渲染，警告文案放进 msg（用户补全后照样能入库）
+      - 没草稿 → ok=False，msg 直接展示（闲聊、越界请求、JSON 坏了都走这里）
+    """
+    result = prompts.clean_many(raw, source_text=source_text)
+    drafts = result.get("data") or []
+    msg = result.get("msg") or ""
+    if drafts:
+        return {"ok": True, "data": drafts, "msg": msg}
+    return {"ok": False, "data": None, "msg": msg or getattr(prompts, "MSG_NOT_BILL", "没识别到记账信息")}
+
+
 # ==========================================
 # 函数 1：真实解析文本记账
 # ==========================================
@@ -84,8 +103,9 @@ def parse_text(text):
             messages=messages,
             temperature=0,
         )
-        data = _parse_model_json(response.choices[0].message.content)
-        return {"ok": True, "data": data, "msg": "文本解析成功"}
+        # 关键：不再自己 json.loads 后就当成功，而是交给 prompts.clean_many 做校验
+        # （金额是否在原话里有依据、日期是否合法/是否未来、类别是否七类、是否越界请求）。
+        return _clean_and_shape(response.choices[0].message.content, text)
     except Exception as e:
         return {"ok": False, "data": None, "msg": f"解析失败: {e}"}
 
@@ -147,8 +167,9 @@ def parse_image(image_path):
             }],
             temperature=0,
         )
-        data = _parse_model_json(response.choices[0].message.content)
-        return {"ok": True, "data": data, "msg": "图片解析成功"}
+        # 图片没有"用户原话"可对照，所以 source_text 传 None：
+        # 跳过金额原文校验，其余校验（七类、日期、收支类型）照常生效。
+        return _clean_and_shape(response.choices[0].message.content, None)
     except Exception as e:
         return {"ok": False, "data": None, "msg": f"解析失败: {e}"}
 
