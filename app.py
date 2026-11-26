@@ -39,6 +39,14 @@ get_budget 的金额字段是 limit_amount 而非 amount。适配层均已兼容
 对应技术方案里 "每个文件先交能返回固定假数据的版本，界面拿假数据即可联调" 的策略。
 演示模式下新增的账单会存进内存，可立即在明细/统计/趋势里查到，形成闭环。
 
+真实模式（有 API Key）下的拒答边界（2026-11-26 按队友复核意见修复）：
+  * demo_parse() 只允许在演示数据模式下调用，绝不能用于真实模式的失败兜底。
+  * ok=False（拒答/非记账）、ok=True 但规整后为空或金额<=0，一律不生成任何草稿，
+    只给出醒目的提示，避免用户把凭空造出的假账单确认入库写进真实数据库。
+  * 界面层另有越界请求与非记账闲聊两道兜底，与 prompts.py 的拒答形成三重保险。
+  * 入库前再校验金额必须 > 0。
+  自测用例：「帮我找个贷款口子」「今天天气怎么样」只出提示；「午饭 25」正常出卡。
+
 运行方式
 --------
     pip install -r requirements.txt
@@ -318,6 +326,69 @@ def normalize_bills(data) -> list[dict]:
         )
     return bills
 
+
+# ---------------------------------------------------------------------------
+# 拒答 / 非记账输入的边界（2026-11-26 按队友复核意见补齐）
+# ---------------------------------------------------------------------------
+
+# 明显的越界/诱导请求；AI 侧 prompts.py 已做拒答，界面层再兜一道。
+OUT_OF_SCOPE_KEYWORDS = (
+    "贷款口子", "找贷款", "借钱", "套现", "绕过额度", "突破额度",
+    "破解", "刷单", "赌博", "洗钱", "信用卡套",
+)
+
+# 明显的非记账闲聊/问答。句中有数字就直接放行，
+# 避免误伤「午饭 25」「昨天打车 32」这类正常记账。
+NON_BILL_KEYWORDS = (
+    "天气", "讲个笑话", "你是谁", "你好", "几点", "今天日期",
+    "翻译", "写作文", "写代码", "新闻", "股价", "陪我聊天", "讲个故事",
+)
+
+
+def is_out_of_scope(text: str) -> bool:
+    """识别明显的越界/诱导请求，避免 AI 偶发漏拒时仍生成草稿。"""
+    return any(word in (text or "") for word in OUT_OF_SCOPE_KEYWORDS)
+
+
+def is_non_bill_input(text: str) -> bool:
+    """识别明显的非记账输入；句中含有数字则一律放行。"""
+    if re.search(r"\d", text or ""):
+        return False
+    return any(word in (text or "") for word in NON_BILL_KEYWORDS)
+
+
+def bills_from_ai_result(ok: bool, data, msg: str) -> tuple[list[dict], str, str]:
+    """
+    把 ai_core 的返回转成「可让用户确认的账单草稿」，返回 (bills, level, notice)。
+
+    按队友复核意见覆盖三种情况：
+      1. ok=False（拒答 / 非记账 / 调用异常）-> 不弹卡，只返回 msg。
+      2. ok=True 但 normalize_bills 为空列表 / 只剩金额<=0 的无效项 -> 也不弹空卡。
+      3. 演示数据模式才允许 demo_parse()，那是刻意设计的联调兜底。
+    真实模式下 AI 失败一律不生成任何草稿，绝不调用 demo_parse()，
+    避免用户把凭空造出的假账单确认入库写进真实数据库。
+    """
+    # 情况 1
+    if not ok or data is None:
+        return [], "error", msg or "AI 未能解析这句话，未生成账单草稿，请改写后重试。"
+
+    # 情况 1 的变体：拒答以纯文本或 {"refused": true, ...} 结构返回
+    if isinstance(data, str):
+        return [], "warning", "这条请求不在记账范围内，已拒绝：" + data[:120]
+    if isinstance(data, dict):
+        refusal_keys = ("refused", "reject", "rejected", "is_refusal", "error", "refusal")
+        if any(str(k).lower() in refusal_keys and v for k, v in data.items()):
+            reply = data.get("reply") or data.get("message") or data.get("msg") or ""
+            return [], "warning", ("这条请求不在记账范围内，已拒绝：" + str(reply)[:120]) if reply else "这条请求不在记账范围内，已拒绝。"
+
+    bills = normalize_bills(data)
+    # 情况 2：空列表，或全是金额<=0 的无效项（半截 JSON 补齐后通常是 amount=0）
+    if not bills:
+        return [], "warning", "AI 未返回可识别的账单（结果为空），未生成草稿，请改写后重试。"
+    valid = [b for b in bills if b["amount"] > 0]
+    if not valid:
+        return [], "warning", "AI 未返回有效的账单数据（金额缺失或为 0），未生成草稿，请改写后重试。"
+    return valid, "success", msg or "解析成功，请确认或修正后入库"
 
 
 def bills_to_frame(bills: list[dict]) -> pd.DataFrame:
@@ -661,17 +732,30 @@ def page_record() -> None:
         text = st.text_input("说出这一笔", placeholder="例如：午饭 25，和同事 AA")
         if st.button("解析", type="primary", key="parse_text"):
             if not text.strip():
+                set_pending([], "")
                 st.warning("先输入一句话再解析。")
+            elif is_out_of_scope(text):
+                # 越界请求：界面层兜底，两种模式都不生成草稿
+                set_pending([], "")
+                st.warning("这条请求不在记账范围内，本应用只处理记账相关输入，已拒绝。")
+            elif is_non_bill_input(text):
+                # 「今天天气怎么样」这类非记账输入：演示模式下也不走 demo_parse
+                set_pending([], "")
+                st.warning("这句话不是一笔消费或收入，未生成账单草稿。请用「午饭 25」这样的方式描述。")
             elif is_demo():
-                set_pending(demo_parse(text), "演示模式：使用内置解析器")
+                # 演示数据模式才允许 demo_parse 造示例草稿（有意设计），并明确标注
+                set_pending(demo_parse(text), "演示模式：使用内置解析器生成示例草稿（非真实 AI 结果）")
             else:
                 ok, data, msg = call_module(ai_core, "parse_text", text, default=None)
-                if not ok or data is None:
-                    log_ai_call(text, msg or "解析失败", False)
-                    set_pending(demo_parse(text), msg or "解析失败，已填入示例结果供演示")
-                else:
-                    log_ai_call(text, data, True)
-                    set_pending(normalize_bills(data), msg or "解析成功")
+                bills, level, notice = bills_from_ai_result(ok, data, msg)
+                log_ai_call(text, data if ok else (msg or "解析失败"), bool(ok and bills))
+                set_pending(bills, "")
+                if level == "error":
+                    st.error(notice)
+                elif level == "warning":
+                    st.warning(notice)
+                elif level == "success":
+                    st.caption(notice)
     else:
         uploads = st.file_uploader(
             "上传小票或支付截图（可一次选多张）",
@@ -708,10 +792,11 @@ def page_record() -> None:
                     ok, data, msg = call_module(ai_core, "parse_image", image_path, default=None)
                     ok_call = bool(ok and data is not None)
                     log_ai_call(file.name, data if ok_call else (msg or "识别失败"), ok_call)
-                    if ok and data is not None:
-                        collected.extend(normalize_bills(data))
+                    parsed, level, parsed_notice = bills_from_ai_result(ok, data, msg)
+                    if parsed:
+                        collected.extend(parsed)
                     else:
-                        failed.append(f"{file.name}：{msg or '识别失败'}")
+                        failed.append(f"{file.name}：{parsed_notice or msg or '识别失败'}")
                 notice = f"识别成功，共 {len(collected)} 笔" if collected else "识别失败"
                 if failed:
                     notice += "；失败 " + "；".join(failed[:2])
@@ -773,28 +858,31 @@ def page_record() -> None:
 
     col_ok, col_cancel = st.columns(2)
     if col_ok.button("确认入库", type="primary"):
-        success, failed, messages = 0, 0, []
-        for bill in edited:
-            if is_demo():
-                st.session_state["demo_store"].append(bill)
-                success += 1
-                continue
-            # db 内部虽已把 add 拆分，界面层统一只走 add_bill 这一个契约入口
-            ok, _, msg = call_module(db, "add_bill", bill, default=None)
-            if ok:
-                success += 1
-            else:
-                failed += 1
-                if msg:
-                    messages.append(msg)
-        message = ""
-        if success:
-            message = f"成功入库 {success} 笔"
-        if failed:
-            message += ("；" if message else "") + f"{failed} 笔入库失败：" + "；".join(messages[:3])
-        flash(message, "error" if failed else "success")
-        set_pending([], "")
-        st.rerun()
+        if any(b["amount"] <= 0 for b in edited):
+            st.error("存在金额为空或为 0 的记录，已阻止入库，请补全金额后重试。")
+        else:
+            success, failed, messages = 0, 0, []
+            for bill in edited:
+                if is_demo():
+                    st.session_state["demo_store"].append(bill)
+                    success += 1
+                    continue
+                # db 内部虽已把 add 拆分，界面层统一只走 add_bill 这一个契约入口
+                ok, _, msg = call_module(db, "add_bill", bill, default=None)
+                if ok:
+                    success += 1
+                else:
+                    failed += 1
+                    if msg:
+                        messages.append(msg)
+            message = ""
+            if success:
+                message = f"成功入库 {success} 笔"
+            if failed:
+                message += ("；" if message else "") + f"{failed} 笔入库失败：" + "；".join(messages[:3])
+            flash(message, "error" if failed else "success")
+            set_pending([], "")
+            st.rerun()
 
     if col_cancel.button("放弃"):
         set_pending([], "")
