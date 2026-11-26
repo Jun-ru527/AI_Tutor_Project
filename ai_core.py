@@ -69,6 +69,71 @@ def _parse_model_json(raw):
     return json.loads(cleaned)
 
 
+def _as_confidence(value):
+    """把模型给的 confidence 统一成 0~1 的 float；不合法返回 None。"""
+    if isinstance(value, bool):
+        return None
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return None
+    if 0.0 <= num <= 1.0:
+        return round(num, 2)
+    return None
+
+
+def _raw_items(raw):
+    """把模型原始输出摊平成 list[dict]，用来取 confidence。"""
+    try:
+        items, _err = prompts.try_parse_json_list(raw)
+    except Exception:
+        return []
+    if not items:
+        return []
+    return [item for item in items if isinstance(item, dict)]
+
+
+def _attach_confidence(bills, raw_items):
+    """把模型标的 confidence 贴回清洗后的账单。
+
+    对齐方式：先按金额匹配（清洗后金额保留两位小数），匹配不到再按顺序兜底。
+    为什么不能简单按下标：clean_many 会丢掉 is_bill=false 的对象，
+    下标一旦错位，就会把 A 笔的把握安到 B 笔头上——比不显示更糟。
+    """
+    if not bills or not raw_items:
+        return bills
+
+    used = set()
+    for bill in bills:
+        if not isinstance(bill, dict):
+            continue
+        amount = bill.get("amount")
+        matched = None
+        if amount is not None:
+            for idx, item in enumerate(raw_items):
+                if idx in used:
+                    continue
+                try:
+                    raw_amount = float(item.get("amount"))
+                except (TypeError, ValueError):
+                    continue
+                if abs(raw_amount - float(amount)) < 0.01:
+                    matched = idx
+                    break
+        if matched is not None:
+            used.add(matched)
+            bill["confidence"] = _as_confidence(raw_items[matched].get("confidence"))
+        else:
+            bill["confidence"] = None
+
+    # 全部没匹配上（比如金额都是 None 的草稿）时，退化为按顺序贴
+    if all(bill.get("confidence") is None for bill in bills if isinstance(bill, dict)):
+        for idx, bill in enumerate(bills):
+            if isinstance(bill, dict) and idx < len(raw_items):
+                bill["confidence"] = _as_confidence(raw_items[idx].get("confidence"))
+    return bills
+
+
 def _clean_and_shape(raw, source_text=None):
     """把模型原始输出交给 prompts.clean_many 做校验，再转成契约形状。
 
@@ -79,11 +144,17 @@ def _clean_and_shape(raw, source_text=None):
     所以这里做一次映射，既保留校验结论，又不破坏契约：
       - 有草稿 → ok=True，草稿交给界面渲染，警告文案放进 msg（用户补全后照样能入库）
       - 没草稿 → ok=False，msg 直接展示（闲聊、越界请求、JSON 坏了都走这里）
+
+    另外顺手把模型标的 confidence 贴回去：clean_many 只输出六字段，会把它丢掉，
+    而界面要靠它回答「这条 AI 有多大把握」。
     """
+    confidences = _raw_items(raw)          # 先抓，清洗后就拿不到了
     result = prompts.clean_many(raw, source_text=source_text)
     drafts = result.get("data") or []
     msg = result.get("msg") or ""
+
     if drafts:
+        _attach_confidence(drafts, confidences)
         return {"ok": True, "data": drafts, "msg": msg}
     return {"ok": False, "data": None, "msg": msg or getattr(prompts, "MSG_NOT_BILL", "没识别到记账信息")}
 
