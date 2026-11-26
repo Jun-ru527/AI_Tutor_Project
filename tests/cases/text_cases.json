@@ -1456,6 +1456,148 @@
           "收入"
         ]
       }
+    },
+    {
+      "id": "m18_notes_merged",
+      "text": "午饭25，打车32，看电影18",
+      "ideal": [
+        {
+          "is_bill": true,
+          "amount": 25,
+          "category": "餐饮",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": ""
+        },
+        {
+          "is_bill": true,
+          "amount": 32,
+          "category": "交通",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": ""
+        },
+        {
+          "is_bill": true,
+          "amount": 18,
+          "category": "娱乐",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": ""
+        }
+      ],
+      "expected": {
+        "ok": true,
+        "count": 3,
+        "msg_contains": "有 3 笔未提供收支类型"
+      }
+    },
+    {
+      "id": "m19_truncated_over_10",
+      "text": "花1元 花2元 花3元 花4元 花5元 花6元 花7元 花8元 花9元 花10元 花11元 花12元",
+      "ideal": [
+        {
+          "is_bill": true,
+          "amount": 1.0,
+          "category": "其他",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": ""
+        },
+        {
+          "is_bill": true,
+          "amount": 2.0,
+          "category": "其他",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": ""
+        },
+        {
+          "is_bill": true,
+          "amount": 3.0,
+          "category": "其他",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": ""
+        },
+        {
+          "is_bill": true,
+          "amount": 4.0,
+          "category": "其他",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": ""
+        },
+        {
+          "is_bill": true,
+          "amount": 5.0,
+          "category": "其他",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": ""
+        },
+        {
+          "is_bill": true,
+          "amount": 6.0,
+          "category": "其他",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": ""
+        },
+        {
+          "is_bill": true,
+          "amount": 7.0,
+          "category": "其他",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": ""
+        },
+        {
+          "is_bill": true,
+          "amount": 8.0,
+          "category": "其他",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": ""
+        },
+        {
+          "is_bill": true,
+          "amount": 9.0,
+          "category": "其他",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": ""
+        },
+        {
+          "is_bill": true,
+          "amount": 10.0,
+          "category": "其他",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": ""
+        },
+        {
+          "is_bill": true,
+          "amount": 11.0,
+          "category": "其他",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": ""
+        },
+        {
+          "is_bill": true,
+          "amount": 12.0,
+          "category": "其他",
+          "spent_at": "2026-11-14",
+          "merchant": "",
+          "note": ""
+        }
+      ],
+      "expected": {
+        "ok": true,
+        "count": 10,
+        "msg_contains": "只保留了前 10 笔"
+      }
     }
   ]
 }
