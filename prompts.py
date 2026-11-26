@@ -1,4 +1,4 @@
-﻿"""AI 记账助手 —— Prompt 模块（A 岗 / prompts.py）。
+"""AI 记账助手 —— Prompt 模块（A 岗 / prompts.py）。
 
 本文件是团队路线大纲中约定的那个 `prompts.py`：**对外的共享函数**
 
@@ -42,8 +42,8 @@ import re
 from datetime import date, datetime, timedelta, timezone as _timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-__version__ = "2.3.1"
-PROMPT_VERSION = "2.3.1"
+__version__ = "2.3.2"
+PROMPT_VERSION = "2.3.2"
 
 DEFAULT_TIMEZONE = "Asia/Shanghai"
 
@@ -1572,6 +1572,41 @@ def try_parse_json_list(raw: Any) -> Tuple[Optional[List[Any]], Optional[str]]:
     return None, error
 
 
+def _merge_notes(notes: Sequence[str]) -> str:
+    """把多笔记录产生的重复提示合并成一句，避免「没看到收支类型…」刷屏。
+
+    规则：
+    - 「先按「支出」记录」「先按「收入」记录」这类，按类型合并成「N 笔」；
+    - 其它提示去重后用空格连接。
+    """
+    if not notes:
+        return ""
+    valid = [note for note in notes if note]
+    if not valid:
+        return ""
+
+    expense_msgs = [n for n in valid if "「支出」" in n]
+    income_msgs = [n for n in valid if "「收入」" in n]
+    others = [n for n in valid if n not in expense_msgs and n not in income_msgs]
+
+    merged_parts: List[str] = []
+    total_typed = len(expense_msgs) + len(income_msgs)
+    if total_typed == 1:
+        merged_parts.extend(expense_msgs + income_msgs)
+    elif total_typed > 1:
+        kinds: List[str] = []
+        if income_msgs:
+            kinds.append(f"收入 {len(income_msgs)} 笔")
+        if expense_msgs:
+            kinds.append(f"支出 {len(expense_msgs)} 笔")
+        merged_parts.append(
+            f"有 {total_typed} 笔未提供收支类型（{'、'.join(kinds)}），已按原话关键词判断，请确认。"
+        )
+
+    merged_parts.extend(dict.fromkeys(others))
+    return " ".join(merged_parts)
+
+
 def _clean_record(
     payload: Any,
     *,
@@ -1744,7 +1779,9 @@ def clean_many(
     items, _error = try_parse_json_list(raw)
     if items is None:
         return _fail(MSG_BAD_JSON, [])
-    items = [item for item in items if isinstance(item, dict)][:MAX_BILLS]
+    items = [item for item in items if isinstance(item, dict)]
+    truncated = len(items) > MAX_BILLS
+    items = items[:MAX_BILLS]
     if not items:
         return _fail(MSG_NOT_BILL, [])
 
@@ -1775,11 +1812,18 @@ def clean_many(
                     bills.pop(index)
                     break
 
+    # 多笔时把重复的提示合并成一句，避免每笔都刷一遍同样的字
+    merged_msg = _merge_notes(notes)
+
+    if truncated:
+        extra = f"识别到多笔，只保留了前 {MAX_BILLS} 笔，请分开录入剩余部分。"
+        merged_msg = f"{merged_msg} {extra}".strip() if merged_msg else extra
+
     if not bills:
         return _fail(problems[0] if problems else MSG_NOT_BILL, [])
     if problems:
         return _fail("；".join(problems), bills)
-    return _ok(bills, " ".join(dict.fromkeys(notes)))
+    return _ok(bills, merged_msg)
 
 
 def clean_intent(
