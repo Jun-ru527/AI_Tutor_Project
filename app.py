@@ -119,6 +119,10 @@ ALLOWED_IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg")
 # T7：OCR 最容易把 24.00 读成 2400；只对「支出」且超过 5000 的金额提醒。
 LARGE_EXPENSE_THRESHOLD = 5000.0
 
+# V1.2 第 2 节：入库要求 0 < amount <= 1,000,000（与 db.add_bill 一致）。
+# 界面层提前拦一道，避免用户点了「确认入库」才收到 db 返回的 False。
+MAX_BILL_AMOUNT = 1_000_000.0
+
 # T6：来源标签，文字录入与小票 OCR 必须显示得不一样。
 SOURCE_TEXT = "文字输入"
 SOURCE_OCR = "小票 OCR"
@@ -357,9 +361,25 @@ def normalize_bills(data) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 # 明显的越界/诱导请求；AI 侧 prompts.py 已做拒答，界面层再兜一道。
+# 按《核心接口约定 V1.2》第 5 节：用**短语**匹配，原则是
+# 「拦『请求方法』，不拦『记账行为』」。
+# 2026-11-26 修复：原表含裸词「借钱」「刷单」「套现」「信用卡套」，会把
+# 「借钱给别人 300」「刷单被骗了 500」等正常记账一并拦掉，而 AI 侧的
+# REFUSAL_PHRASES 本来就没有这些裸词 —— 两张词表不一致。
+# 改动词表后，请用 V1.2 第 5 节的 5 条对照逐条自测。
 OUT_OF_SCOPE_KEYWORDS = (
-    "贷款口子", "找贷款", "借钱", "套现", "绕过额度", "突破额度",
-    "破解", "刷单", "赌博", "洗钱", "信用卡套",
+    # 贷款 / 借钱：只拦「找渠道、求方法」，不拦「还贷款」「借给别人」
+    "贷款口子", "哪里能贷款", "怎么贷款", "教我贷款", "帮我贷款", "找贷款",
+    "借钱渠道", "哪里能借钱", "怎么借钱", "借钱平台",
+    # 套现 / 额度：只拦方法类请求
+    "怎么套现", "教我套现", "帮我套现", "套现方法", "套现渠道",
+    "绕过额度", "突破额度", "怎么提额", "教我提额", "刷额度",
+    # 刷单：只拦「求带、赚钱」，不拦「被骗了」
+    "刷单赚钱", "教我刷单", "怎么刷单", "刷单兼职", "刷单平台",
+    # 荐股 / 违法：一律用短语
+    "荐股", "推荐股票", "股票推荐", "涨停股", "内幕消息",
+    "代开发票", "逃税方法", "怎么逃税", "洗钱方法", "怎么洗钱",
+    "赌博网站", "赌博平台", "哪里能赌", "破解方法", "怎么破解",
 )
 
 # 明显的非记账闲聊/问答。句中有数字就直接放行，
@@ -939,14 +959,17 @@ def page_record() -> None:
                 }
             )
 
-    # T3：缺金额时按钮直接置灰，不让用户点了才看到「入库失败」
-    missing_amount = [i + 1 for i, b in enumerate(edited) if b["amount"] <= 0]
-    if missing_amount:
-        st.warning("第 " + "、".join(str(i) for i in missing_amount) + " 笔缺少金额，请补全后再入库。")
+    # T3 / V1.2 第 2 节：金额必须 0 < amount <= 100 万，否则按钮直接置灰，
+    # 不让用户点了才看到「入库失败」。db.add_bill 仍会再守一道。
+    invalid_amount = [i + 1 for i, b in enumerate(edited)
+                      if b["amount"] <= 0 or b["amount"] > MAX_BILL_AMOUNT]
+    if invalid_amount:
+        st.warning("第 " + "、".join(str(i) for i in invalid_amount) +
+                   f" 笔金额不合法（须大于 0 且不超过 ¥ {MAX_BILL_AMOUNT:,.0f}），请修正后再入库。")
     col_ok, col_cancel = st.columns(2)
-    if col_ok.button("确认入库", type="primary", disabled=bool(missing_amount)):
-        if any(b["amount"] <= 0 for b in edited):
-            st.error("存在金额为空或为 0 的记录，已阻止入库，请补全金额后重试。")
+    if col_ok.button("确认入库", type="primary", disabled=bool(invalid_amount)):
+        if any(b["amount"] <= 0 or b["amount"] > MAX_BILL_AMOUNT for b in edited):
+            st.error("存在金额为 0、为空或超过 100 万的记录，已阻止入库，请修正后重试。")
         else:
             success, failed, messages = 0, 0, []
             for bill in edited:
