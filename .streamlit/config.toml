@@ -1,0 +1,6 @@
+[client]
+# T5：隐藏右上角 Deploy / Rerun 等开发机控件
+toolbarMode = "minimal"
+
+[browser]
+gatherUsageStats = false

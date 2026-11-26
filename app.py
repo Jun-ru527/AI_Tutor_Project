@@ -39,6 +39,23 @@ get_budget 的金额字段是 limit_amount 而非 amount。适配层均已兼容
 对应技术方案里 "每个文件先交能返回固定假数据的版本，界面拿假数据即可联调" 的策略。
 演示模式下新增的账单会存进内存，可立即在明细/统计/趋势里查到，形成闭环。
 
+真实模式（有 API Key）下的拒答边界（2026-11-26 按队友复核意见修复）：
+  * demo_parse() 只允许在演示数据模式下调用，绝不能用于真实模式的失败兜底。
+  * ok=False（拒答/非记账）、ok=True 但规整后为空或金额<=0，一律不生成任何草稿，
+    只给出醒目的提示，避免用户把凭空造出的假账单确认入库写进真实数据库。
+  * 界面层另有越界请求与非记账闲聊两道兜底，与 prompts.py 的拒答形成三重保险。
+  * 入库前再校验金额必须 > 0。
+  自测用例：「帮我找个贷款口子」「今天天气怎么样」只出提示；「午饭 25」正常出卡。
+
+本周优化（11/26-11/29，岗位 C 的 7 项）：
+  T1 明细页导出 CSV（utf-8-sig，Excel 不乱码）
+  T2 对账自检：明细逐笔累加 vs 统计页合计，一键给出「一致 / 差异金额」
+  T3 缺金额时「确认入库」按钮置灰（保留待补全草稿，不整张丢弃）
+  T4 上传限 5MB + PNG/JPG/JPEG 白名单，超限出中文提示且不崩
+  T5 隐藏开发机工具栏（.streamlit/config.toml + CSS 兜底）
+  T6 草稿卡片显示「置信度 / 来源」，文字输入与小票 OCR 标签不同
+  T7 单笔支出 > 5000 提示「金额偏大」，收入不触发
+
 运行方式
 --------
     pip install -r requirements.txt
@@ -93,6 +110,19 @@ EXPENSE_CATEGORIES = ("餐饮", "交通", "购物", "居住", "娱乐", "医疗"
 INCOME_CATEGORIES = ("工资", "兼职", "红包", "理财", "其他")
 
 BILL_FIELDS = ("amount", "category", "spent_at", "merchant", "note", "type")
+
+# T4：一张 200MB 大图能卡死演示，界面层限制 5MB + 后缀白名单。
+MAX_UPLOAD_MB = 5
+MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
+ALLOWED_IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg")
+
+# T7：OCR 最容易把 24.00 读成 2400；只对「支出」且超过 5000 的金额提醒。
+LARGE_EXPENSE_THRESHOLD = 5000.0
+
+# T6：来源标签，文字录入与小票 OCR 必须显示得不一样。
+SOURCE_TEXT = "文字输入"
+SOURCE_OCR = "小票 OCR"
+SOURCE_DEMO = "演示数据"
 
 # 小票/截图上传的落盘位置。请让 D 在 .gitignore 中排除该目录，避免把用户图片提交进仓库。
 UPLOAD_DIR = Path(__file__).resolve().parent / "assets" / "uploads"
@@ -314,10 +344,100 @@ def normalize_bills(data) -> list[dict]:
                 # 关键：这里以前只认 "支出"/"收入" 两个词，其余一律当支出，
                 # 于是模型写的英文、带空格、或干脆没这个字段时，收入就永远变支出。
                 "type": _norm_type(_pick(item, "type")) or TYPE_EXPENSE,
+                # T6：界面专用元数据，以下划线开头，不进入 BILL_FIELDS，
+                # 也不会被写进数据库（入库前 edited 只取 6 字段）。
+                "_confidence": _as_bill_confidence(item.get("confidence")),
             }
         )
     return bills
 
+
+# ---------------------------------------------------------------------------
+# 拒答 / 非记账输入的边界（2026-11-26 按队友复核意见补齐）
+# ---------------------------------------------------------------------------
+
+# 明显的越界/诱导请求；AI 侧 prompts.py 已做拒答，界面层再兜一道。
+OUT_OF_SCOPE_KEYWORDS = (
+    "贷款口子", "找贷款", "借钱", "套现", "绕过额度", "突破额度",
+    "破解", "刷单", "赌博", "洗钱", "信用卡套",
+)
+
+# 明显的非记账闲聊/问答。句中有数字就直接放行，
+# 避免误伤「午饭 25」「昨天打车 32」这类正常记账。
+NON_BILL_KEYWORDS = (
+    "天气", "讲个笑话", "你是谁", "你好", "几点", "今天日期",
+    "翻译", "写作文", "写代码", "新闻", "股价", "陪我聊天", "讲个故事",
+)
+
+
+def _as_bill_confidence(value):
+    """T6：把模型给的 confidence 规范成 0~1 的 float；缺失/非法返回 None。"""
+    if value is None or value == "":
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if 0.0 <= number <= 1.0:
+        return number
+    if 1.0 < number <= 100.0:
+        return number / 100.0
+    return None
+
+
+def is_out_of_scope(text: str) -> bool:
+    """识别明显的越界/诱导请求，避免 AI 偶发漏拒时仍生成草稿。"""
+    return any(word in (text or "") for word in OUT_OF_SCOPE_KEYWORDS)
+
+
+def is_non_bill_input(text: str) -> bool:
+    """识别明显的非记账输入；句中含有数字则一律放行。"""
+    if re.search(r"\d", text or ""):
+        return False
+    return any(word in (text or "") for word in NON_BILL_KEYWORDS)
+
+
+def bills_from_ai_result(ok: bool, data, msg: str) -> tuple[list[dict], str, str]:
+    """
+    把 ai_core 的返回转成「可让用户确认的账单草稿」，返回 (bills, level, notice)。
+
+    按队友复核意见覆盖三种情况：
+      1. ok=False（拒答 / 非记账 / 调用异常）-> 不弹卡，只返回 msg。
+      2. ok=True 但 normalize_bills 为空列表 / 只剩金额<=0 的无效项 -> 也不弹空卡。
+      3. 演示数据模式才允许 demo_parse()，那是刻意设计的联调兜底。
+    真实模式下 AI 失败一律不生成任何草稿，绝不调用 demo_parse()，
+    避免用户把凭空造出的假账单确认入库写进真实数据库。
+    """
+    # 情况 1
+    if not ok or data is None:
+        return [], "error", msg or "AI 未能解析这句话，未生成账单草稿，请改写后重试。"
+
+    # 情况 1 的变体：拒答以纯文本或 {"refused": true, ...} 结构返回
+    if isinstance(data, str):
+        return [], "warning", "这条请求不在记账范围内，已拒绝：" + data[:120]
+    if isinstance(data, dict):
+        refusal_keys = ("refused", "reject", "rejected", "is_refusal", "error", "refusal")
+        if any(str(k).lower() in refusal_keys and v for k, v in data.items()):
+            reply = data.get("reply") or data.get("message") or data.get("msg") or ""
+            return [], "warning", ("这条请求不在记账范围内，已拒绝：" + str(reply)[:120]) if reply else "这条请求不在记账范围内，已拒绝。"
+
+    bills = normalize_bills(data)
+    # 情况 2：空列表 -> 不弹空卡
+    if not bills:
+        return [], "warning", "AI 未返回可识别的账单（结果为空），未生成草稿，请改写后重试。"
+    # 只丢弃「完全空白的假卡」（拒答/半截 JSON 被字段补齐后的产物）。
+    # 缺金额但带分类或备注的草稿必须保留：T3 要求「买衣服两百多」弹出卡片、
+    # 确认按钮置灰让用户补全，而不是整张卡消失。
+    meaningful = [
+        b for b in bills
+        if b["amount"] > 0
+        or str(b.get("merchant") or "").strip()
+        or str(b.get("note") or "").strip()
+        or str(b.get("category") or "其他") not in ("其他", "", "None")
+    ]
+    if not meaningful:
+        return [], "warning", "AI 未返回有效的账单数据，未生成草稿，请改写后重试。"
+    return meaningful, "success", msg or "解析成功，请确认或修正后入库"
 
 
 def bills_to_frame(bills: list[dict]) -> pd.DataFrame:
@@ -608,7 +728,10 @@ def parse_token() -> str:
     return str(st.session_state.get("parse_token", 0))
 
 
-def set_pending(bills: list[dict], notice: str = "") -> None:
+def set_pending(bills: list[dict], notice: str = "", source: str = SOURCE_TEXT) -> None:
+    """T6：给每笔草稿打上来源标签，让「文字输入」和「小票 OCR」在卡片上可区分。"""
+    for bill in bills:
+        bill.setdefault("_source", source)
     st.session_state["pending_bills"] = bills
     st.session_state["parse_notice"] = notice
     bump_parse_token()
@@ -661,17 +784,31 @@ def page_record() -> None:
         text = st.text_input("说出这一笔", placeholder="例如：午饭 25，和同事 AA")
         if st.button("解析", type="primary", key="parse_text"):
             if not text.strip():
+                set_pending([], "")
                 st.warning("先输入一句话再解析。")
+            elif is_out_of_scope(text):
+                # 越界请求：界面层兜底，两种模式都不生成草稿
+                set_pending([], "")
+                st.warning("这条请求不在记账范围内，本应用只处理记账相关输入，已拒绝。")
+            elif is_non_bill_input(text):
+                # 「今天天气怎么样」这类非记账输入：演示模式下也不走 demo_parse
+                set_pending([], "")
+                st.warning("这句话不是一笔消费或收入，未生成账单草稿。请用「午饭 25」这样的方式描述。")
             elif is_demo():
-                set_pending(demo_parse(text), "演示模式：使用内置解析器")
+                # 演示数据模式才允许 demo_parse 造示例草稿（有意设计），并明确标注
+                set_pending(demo_parse(text), "演示模式：使用内置解析器生成示例草稿（非真实 AI 结果）",
+                            source=SOURCE_DEMO)
             else:
                 ok, data, msg = call_module(ai_core, "parse_text", text, default=None)
-                if not ok or data is None:
-                    log_ai_call(text, msg or "解析失败", False)
-                    set_pending(demo_parse(text), msg or "解析失败，已填入示例结果供演示")
-                else:
-                    log_ai_call(text, data, True)
-                    set_pending(normalize_bills(data), msg or "解析成功")
+                bills, level, notice = bills_from_ai_result(ok, data, msg)
+                log_ai_call(text, data if ok else (msg or "解析失败"), bool(ok and bills))
+                set_pending(bills, "", source=SOURCE_TEXT)
+                if level == "error":
+                    st.error(notice)
+                elif level == "warning":
+                    st.warning(notice)
+                elif level == "success":
+                    st.caption(notice)
     else:
         uploads = st.file_uploader(
             "上传小票或支付截图（可一次选多张）",
@@ -679,6 +816,27 @@ def page_record() -> None:
             accept_multiple_files=True,
         )
         uploads = uploads or []
+        # T4：先过滤，避免把 200MB 大图交给 st.image / 视觉模型导致演示卡死。
+        accepted = []
+        rejected = []
+        for file in uploads:
+            suffix = Path(file.name).suffix.lower()
+            if suffix not in ALLOWED_IMAGE_SUFFIXES:
+                rejected.append(f"「{file.name}」不是支持的图片格式（仅 PNG / JPG / JPEG）")
+                continue
+            try:
+                size = len(file.getbuffer())
+            except Exception:
+                size = int(getattr(file, "size", 0) or 0)
+            if size > MAX_UPLOAD_BYTES:
+                rejected.append(f"「{file.name}」{size / 1024 / 1024:.1f} MB，超过 {MAX_UPLOAD_MB} MB 上限，已跳过")
+                continue
+            accepted.append(file)
+        uploads = accepted
+        for reason in rejected[:3]:
+            st.warning(reason)
+        if rejected and not uploads:
+            st.info("没有可识别的图片，请压缩后重新上传（单张不超过 5 MB）。")
         if uploads:
             preview_cols = st.columns(min(len(uploads), 3))
             for i, file in enumerate(uploads):
@@ -699,6 +857,7 @@ def page_record() -> None:
                         "type": TYPE_EXPENSE,
                     }],
                     "演示模式：返回示例识别结果",
+                    source=SOURCE_DEMO,
                 )
             else:
                 collected: list[dict] = []
@@ -708,14 +867,15 @@ def page_record() -> None:
                     ok, data, msg = call_module(ai_core, "parse_image", image_path, default=None)
                     ok_call = bool(ok and data is not None)
                     log_ai_call(file.name, data if ok_call else (msg or "识别失败"), ok_call)
-                    if ok and data is not None:
-                        collected.extend(normalize_bills(data))
+                    parsed, level, parsed_notice = bills_from_ai_result(ok, data, msg)
+                    if parsed:
+                        collected.extend(parsed)
                     else:
-                        failed.append(f"{file.name}：{msg or '识别失败'}")
+                        failed.append(f"{file.name}：{parsed_notice or msg or '识别失败'}")
                 notice = f"识别成功，共 {len(collected)} 笔" if collected else "识别失败"
                 if failed:
                     notice += "；失败 " + "；".join(failed[:2])
-                set_pending(collected, notice)
+                set_pending(collected, notice, source=SOURCE_OCR)
 
     notice = st.session_state.get("parse_notice", "")
     if notice:
@@ -732,6 +892,11 @@ def page_record() -> None:
     token = parse_token()
     for index, bill in enumerate(pending):
         with st.expander(f"第 {index + 1} 笔", expanded=True):
+            # T6：置信度与来源标签，回答「AI 凭什么这么归」
+            confidence = bill.get("_confidence")
+            confidence_text = (f"{confidence * 100:.0f}%" if confidence is not None else "未提供")
+            source_text = str(bill.get("_source") or SOURCE_TEXT)
+            st.caption(f"来源：{html.escape(source_text)}　|　置信度：{confidence_text}")
             col_a, col_b = st.columns(2)
             bill_type = col_a.selectbox(
                 "收支类型",
@@ -760,6 +925,9 @@ def page_record() -> None:
             )
             merchant = col_a.text_input("商户", value=bill["merchant"], key=f"merchant_{token}_{index}")
             note = col_b.text_input("备注（原话）", value=bill["note"], key=f"note_{token}_{index}")
+            # T7：只判「支出」且金额偏大，8000 的工资不触发
+            if bill_type == TYPE_EXPENSE and float(amount) > LARGE_EXPENSE_THRESHOLD:
+                st.warning(f"金额偏大（¥ {float(amount):,.2f}）：OCR 可能把 24.00 读成 2400，请核对小票。")
             edited.append(
                 {
                     "amount": float(amount),
@@ -771,30 +939,37 @@ def page_record() -> None:
                 }
             )
 
+    # T3：缺金额时按钮直接置灰，不让用户点了才看到「入库失败」
+    missing_amount = [i + 1 for i, b in enumerate(edited) if b["amount"] <= 0]
+    if missing_amount:
+        st.warning("第 " + "、".join(str(i) for i in missing_amount) + " 笔缺少金额，请补全后再入库。")
     col_ok, col_cancel = st.columns(2)
-    if col_ok.button("确认入库", type="primary"):
-        success, failed, messages = 0, 0, []
-        for bill in edited:
-            if is_demo():
-                st.session_state["demo_store"].append(bill)
-                success += 1
-                continue
-            # db 内部虽已把 add 拆分，界面层统一只走 add_bill 这一个契约入口
-            ok, _, msg = call_module(db, "add_bill", bill, default=None)
-            if ok:
-                success += 1
-            else:
-                failed += 1
-                if msg:
-                    messages.append(msg)
-        message = ""
-        if success:
-            message = f"成功入库 {success} 笔"
-        if failed:
-            message += ("；" if message else "") + f"{failed} 笔入库失败：" + "；".join(messages[:3])
-        flash(message, "error" if failed else "success")
-        set_pending([], "")
-        st.rerun()
+    if col_ok.button("确认入库", type="primary", disabled=bool(missing_amount)):
+        if any(b["amount"] <= 0 for b in edited):
+            st.error("存在金额为空或为 0 的记录，已阻止入库，请补全金额后重试。")
+        else:
+            success, failed, messages = 0, 0, []
+            for bill in edited:
+                if is_demo():
+                    st.session_state["demo_store"].append(bill)
+                    success += 1
+                    continue
+                # db 内部虽已把 add 拆分，界面层统一只走 add_bill 这一个契约入口
+                ok, _, msg = call_module(db, "add_bill", bill, default=None)
+                if ok:
+                    success += 1
+                else:
+                    failed += 1
+                    if msg:
+                        messages.append(msg)
+            message = ""
+            if success:
+                message = f"成功入库 {success} 笔"
+            if failed:
+                message += ("；" if message else "") + f"{failed} 笔入库失败：" + "；".join(messages[:3])
+            flash(message, "error" if failed else "success")
+            set_pending([], "")
+            st.rerun()
 
     if col_cancel.button("放弃"):
         set_pending([], "")
@@ -1040,6 +1215,35 @@ def page_details() -> None:
     col_m2.metric("支出", f"¥ {filtered[filtered['type'] == TYPE_EXPENSE]['amount'].sum():,.2f}")
     col_m3.metric("收入", f"¥ {filtered[filtered['type'] == TYPE_INCOME]['amount'].sum():,.2f}")
 
+    # T1：导出当前筛选结果。utf-8-sig 带 BOM，Excel 直接打开中文不乱码。
+    csv_bytes = filtered[list(BILL_FIELDS)].to_csv(index=False).encode("utf-8-sig")
+    st.download_button(
+        "导出 CSV（当前筛选结果）",
+        data=csv_bytes,
+        file_name=f"账单明细_{date.today().strftime('%Y%m%d')}.csv",
+        mime="text/csv",
+        key="export_csv",
+    )
+
+    # T2：明细逐笔累加（pandas）vs 统计页分类合计（真实模式走 db.sum_by_category）。
+    # 两条独立路径比对，专门回答「被要求对账时」的一键结论。
+    if st.button("对账自检", key="reconcile"):
+        lines = []
+        for check_type in BILL_TYPES:
+            detail = float(frame[frame["type"] == check_type]["amount"].sum())
+            summary = load_category_summary(check_type, frame)
+            stat = float(summary["金额"].sum()) if not summary.empty else 0.0
+            diff = detail - stat
+            if abs(diff) < 0.01:
+                lines.append(f"{check_type}：一致（¥ {detail:,.2f}）")
+            else:
+                lines.append(f"{check_type}：差异 ¥ {diff:,.2f}"
+                             f"（明细 ¥ {detail:,.2f} / 统计 ¥ {stat:,.2f}）")
+        if all("一致" in line for line in lines):
+            st.success("对账一致　" + "；".join(lines))
+        else:
+            st.error("对账不一致　" + "；".join(lines))
+
     # "哪类花得最多"：给出按类别降序的真实统计，而不是把问题丢给模型自由回答
     if active and active.get("top") and not filtered.empty:
         st.markdown("**按类别排序**")
@@ -1212,8 +1416,23 @@ def import_demo_to_db() -> tuple[int, int, int]:
     return success, failed, deleted
 
 
+def hide_dev_toolbar() -> None:
+    """T5 兜底：即使 .streamlit/config.toml 没被打包进镜像，也隐藏开发机工具栏。"""
+    st.markdown(
+        """<style>
+        [data-testid="stToolbar"] { display: none !important; }
+        #MainMenu { visibility: hidden !important; }
+        footer { visibility: hidden !important; }
+        header { visibility: hidden !important; }
+        [data-testid="stStatusWidget"] { display: none !important; }
+        </style>""",
+        unsafe_allow_html=True,
+    )
+
+
 def main() -> None:
     st.set_page_config(page_title="个人记账与消费分析 AI 助手", page_icon="¥", layout="wide")
+    hide_dev_toolbar()
     init_state()
 
     st.title("个人记账与消费分析 AI 助手")
