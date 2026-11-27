@@ -1,3 +1,5 @@
-openai
-streamlit
-python-dotenv
+# 依赖钉版本：保证本机、队友机器、Docker 镜像装到完全一致的版本。
+# 升级时改这里并重新跑一遍 21 项验收，别直接 pip install 最新版。
+openai==3.49.0
+streamlit==1.67.0
+python-dotenv==1.2.4
