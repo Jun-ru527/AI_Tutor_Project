@@ -1,0 +1,26 @@
+# 只把运行必需的文件送进镜像；下面这些本地文件一律不带
+.git
+.gitignore
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+
+# 密钥与本地数据（绝对不能进镜像）
+.env
+ledger.db
+*.db
+*.db.bak*
+*.bak
+*.bak-*
+
+# 用户上传的小票照片（含隐私，且体积大）
+assets/uploads/
+
+# 只在开发时用得到
+docs/
+tests/
+tools/
+.streamlit/secrets.toml
+*.md
